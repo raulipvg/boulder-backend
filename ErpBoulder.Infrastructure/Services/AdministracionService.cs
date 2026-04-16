@@ -619,6 +619,16 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             ValidatePackTicketsConfiguration(normalizedRequest);
         }
 
+        if (tipoProductoBase.Codigo == ProductBaseCodes.ClasesConProfesor)
+        {
+            ValidateClasesConProfesorConfiguration(normalizedRequest);
+        }
+
+        if (tipoProductoBase.Codigo == ProductBaseCodes.TicketIndividual)
+        {
+            ValidateTicketIndividualConfiguration(normalizedRequest);
+        }
+
         var entity = new ProductoEmpresa
         {
             EmpresaId = empresaId,
@@ -675,6 +685,16 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         if (ProductBaseCodes.IsPackTickets(tipoProductoBase.Codigo))
         {
             ValidatePackTicketsConfiguration(normalizedRequest);
+        }
+
+        if (tipoProductoBase.Codigo == ProductBaseCodes.ClasesConProfesor)
+        {
+            ValidateClasesConProfesorConfiguration(normalizedRequest);
+        }
+
+        if (tipoProductoBase.Codigo == ProductBaseCodes.TicketIndividual)
+        {
+            ValidateTicketIndividualConfiguration(normalizedRequest);
         }
 
         var entity = await DbContext.ProductosEmpresa
@@ -929,10 +949,71 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
                 GeneraBeneficio = true,
                 ClaseId = null,
                 AccesoIlimitado = false,
+                // BloqueHorarioComercialId se preserva: puede ser null (libre) o tener valor
+            };
+        }
+
+        if (tipoCodigo == ProductBaseCodes.ClasesConProfesor)
+        {
+            return request with
+            {
+                ModoPrecio = "tarifa",
+                PrecioFijo = null,
+                RequiereCliente = true,
+                GeneraBeneficio = true,
+                AccesoIlimitado = false,
+                VigenciaDias = 30,
+                BloqueHorarioComercialId = null,
+            };
+        }
+
+        if (tipoCodigo == ProductBaseCodes.ProductoCaja)
+        {
+            return request with
+            {
+                ModoPrecio = "fijo",
+                VigenciaDias = null,
+                UsosIncluidos = null,
+                BloqueHorarioComercialId = null,
+                ClaseId = null,
+                RequiereCliente = false,
+                GeneraBeneficio = false,
+                AccesoIlimitado = false,
+            };
+        }
+
+        if (tipoCodigo == ProductBaseCodes.TicketIndividual)
+        {
+            return request with
+            {
+                ModoPrecio = "tarifa",
+                PrecioFijo = null,
+                VigenciaDias = null,
+                UsosIncluidos = 1,
+                ClaseId = null,
+                RequiereCliente = true,
+                GeneraBeneficio = false,
+                AccesoIlimitado = false,
             };
         }
 
         return request;
+    }
+
+    private static void ValidateClasesConProfesorConfiguration(UpsertProductoRequestDto request)
+    {
+        if (!request.ClaseId.HasValue)
+        {
+            throw new InvalidOperationException("El producto de tipo Clases debe tener una clase asociada.");
+        }
+    }
+
+    private static void ValidateTicketIndividualConfiguration(UpsertProductoRequestDto request)
+    {
+        if (!request.BloqueHorarioComercialId.HasValue)
+        {
+            throw new InvalidOperationException("El ticket individual debe estar asociado a un bloque horario.");
+        }
     }
 
     private static void ValidatePackTicketsConfiguration(UpsertProductoRequestDto request)
