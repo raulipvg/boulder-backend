@@ -25,7 +25,8 @@ public sealed class OperacionService : ServiceBase, IOperacionService
 
         if (!string.IsNullOrWhiteSpace(search))
         {
-            query = query.Where(x => x.Persona.NombreCompleto.Contains(search) || x.Persona.Rut.Contains(search));
+            var searchTerm = $"%{search.Trim()}%";
+            query = query.Where(x => EF.Functions.ILike(x.Persona.NombreCompleto, searchTerm) || EF.Functions.ILike(x.Persona.Rut, searchTerm));
         }
 
         return await query

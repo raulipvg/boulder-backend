@@ -10,16 +10,23 @@ public interface IAdministracionService
     Task<IReadOnlyCollection<LookupDto>> GetProfesoresAsync(CancellationToken cancellationToken);
     Task<IReadOnlyCollection<EmpresaDto>> GetEmpresasAsync(CancellationToken cancellationToken);
     Task<EmpresaDto> CreateEmpresaAsync(CreateEmpresaRequestDto request, CancellationToken cancellationToken);
+    Task<EmpresaDto> UpdateEmpresaAsync(long empresaId, CreateEmpresaRequestDto request, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<UsuarioDto>> GetUsuariosAsync(CancellationToken cancellationToken);
     Task<UsuarioDto> CreateUsuarioAsync(CreateUsuarioRequestDto request, CancellationToken cancellationToken);
+    Task<UsuarioDto> UpdateUsuarioAsync(long usuarioId, UpdateUsuarioRequestDto request, CancellationToken cancellationToken);
+    Task ChangeUsuarioPasswordAsync(long usuarioId, ChangeUsuarioPasswordRequestDto request, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<TipoClienteDto>> GetTiposClienteAsync(CancellationToken cancellationToken);
     Task<TipoClienteDto> CreateTipoClienteAsync(CreateTipoClienteRequestDto request, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<ClienteDto>> GetClientesAsync(string? search, CancellationToken cancellationToken);
     Task<ClienteDto> CreateClienteAsync(UpsertClienteRequestDto request, CancellationToken cancellationToken);
+    Task<ClienteDto> UpdateClienteAsync(long clienteEmpresaId, UpsertClienteRequestDto request, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<ProductoDto>> GetProductosAsync(CancellationToken cancellationToken);
     Task<ProductoDto> CreateProductoAsync(UpsertProductoRequestDto request, CancellationToken cancellationToken);
+    Task<ProductoDto> UpdateProductoAsync(long productoEmpresaId, UpsertProductoRequestDto request, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<TarifaDto>> GetTarifasAsync(CancellationToken cancellationToken);
     Task<TarifaDto> CreateTarifaAsync(UpsertTarifaRequestDto request, CancellationToken cancellationToken);
+    Task<TarifaDto> UpdateTarifaAsync(long tarifaProductoId, UpsertTarifaRequestDto request, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<ClaseDto>> GetClasesAsync(CancellationToken cancellationToken);
     Task<ClaseDto> CreateClaseAsync(UpsertClaseRequestDto request, CancellationToken cancellationToken);
+    Task<ClaseDto> UpdateClaseAsync(long claseId, UpsertClaseRequestDto request, CancellationToken cancellationToken);
 }

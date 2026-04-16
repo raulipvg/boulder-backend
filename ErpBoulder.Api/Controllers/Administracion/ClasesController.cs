@@ -21,4 +21,10 @@ public sealed class ClasesController(IAdministracionService administracionServic
     {
         return Ok(await administracionService.CreateClaseAsync(request, cancellationToken));
     }
+
+    [HttpPut("{claseId:long}")]
+    public async Task<ActionResult<ClaseDto>> Put(long claseId, [FromBody] UpsertClaseRequestDto request, CancellationToken cancellationToken)
+    {
+        return Ok(await administracionService.UpdateClaseAsync(claseId, request, cancellationToken));
+    }
 }

@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 [ApiController]
-[Authorize(Roles = "ADMIN_TOTAL,ADMIN_EMPRESA")]
+[Authorize(Roles = "ADMIN_TOTAL,ADMIN_EMPRESA,VENDEDOR_EMPRESA")]
 [Route("api/administracion/tipos-cliente")]
 public sealed class TiposClienteController(IAdministracionService administracionService) : ControllerBase
 {
@@ -16,6 +16,7 @@ public sealed class TiposClienteController(IAdministracionService administracion
         return Ok(await administracionService.GetTiposClienteAsync(cancellationToken));
     }
 
+    [Authorize(Roles = "ADMIN_TOTAL,ADMIN_EMPRESA")]
     [HttpPost]
     public async Task<ActionResult<TipoClienteDto>> Post([FromBody] CreateTipoClienteRequestDto request, CancellationToken cancellationToken)
     {

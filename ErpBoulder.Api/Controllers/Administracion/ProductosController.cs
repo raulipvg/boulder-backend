@@ -21,4 +21,10 @@ public sealed class ProductosController(IAdministracionService administracionSer
     {
         return Ok(await administracionService.CreateProductoAsync(request, cancellationToken));
     }
+
+    [HttpPut("{productoEmpresaId:long}")]
+    public async Task<ActionResult<ProductoDto>> Put(long productoEmpresaId, [FromBody] UpsertProductoRequestDto request, CancellationToken cancellationToken)
+    {
+        return Ok(await administracionService.UpdateProductoAsync(productoEmpresaId, request, cancellationToken));
+    }
 }

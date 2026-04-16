@@ -22,4 +22,11 @@ public sealed class EmpresasController(IAdministracionService administracionServ
     {
         return Ok(await administracionService.CreateEmpresaAsync(request, cancellationToken));
     }
+
+    [Authorize(Roles = "ADMIN_TOTAL")]
+    [HttpPut("{empresaId:long}")]
+    public async Task<ActionResult<EmpresaDto>> Put(long empresaId, [FromBody] CreateEmpresaRequestDto request, CancellationToken cancellationToken)
+    {
+        return Ok(await administracionService.UpdateEmpresaAsync(empresaId, request, cancellationToken));
+    }
 }

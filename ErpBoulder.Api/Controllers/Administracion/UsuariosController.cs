@@ -21,4 +21,17 @@ public sealed class UsuariosController(IAdministracionService administracionServ
     {
         return Ok(await administracionService.CreateUsuarioAsync(request, cancellationToken));
     }
+
+    [HttpPut("{usuarioId:long}")]
+    public async Task<ActionResult<UsuarioDto>> Put(long usuarioId, [FromBody] UpdateUsuarioRequestDto request, CancellationToken cancellationToken)
+    {
+        return Ok(await administracionService.UpdateUsuarioAsync(usuarioId, request, cancellationToken));
+    }
+
+    [HttpPut("{usuarioId:long}/password")]
+    public async Task<ActionResult> ChangePassword(long usuarioId, [FromBody] ChangeUsuarioPasswordRequestDto request, CancellationToken cancellationToken)
+    {
+        await administracionService.ChangeUsuarioPasswordAsync(usuarioId, request, cancellationToken);
+        return NoContent();
+    }
 }

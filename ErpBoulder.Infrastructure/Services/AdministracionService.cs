@@ -28,7 +28,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
 
         return await query
             .OrderBy(x => x.NombreComercial)
-            .Select(x => new EmpresaDto(x.EmpresaId, x.NombreComercial, x.Rut, x.Estado, x.MonedaCodigo, x.CorreoContacto))
+            .Select(x => new EmpresaDto(x.EmpresaId, x.NombreComercial, x.RazonSocial, x.Rut, x.Estado, x.MonedaCodigo, x.TelefonoContacto, x.CorreoContacto))
             .ToListAsync(cancellationToken);
     }
 
@@ -56,7 +56,10 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         return await DbContext.BloquesHorariosComerciales.AsNoTracking()
             .Where(x => x.EmpresaId == empresaId && x.Activo)
             .OrderBy(x => x.Nombre)
-            .Select(x => new LookupDto(x.BloqueHorarioComercialId, x.Nombre, x.Nombre))
+            .Select(x => new LookupDto(
+                x.BloqueHorarioComercialId,
+                x.Nombre,
+                $"{x.Nombre} ({x.HoraInicio:HH\\:mm}-{x.HoraFin:HH\\:mm})"))
             .ToListAsync(cancellationToken);
     }
 
@@ -97,7 +100,28 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         await DbContext.SaveChangesAsync(cancellationToken);
         await AuditAsync("empresa", entity.EmpresaId, "crear", new { entity.NombreComercial, entity.Rut }, entity.EmpresaId, cancellationToken);
 
-        return new EmpresaDto(entity.EmpresaId, entity.NombreComercial, entity.Rut, entity.Estado, entity.MonedaCodigo, entity.CorreoContacto);
+        return new EmpresaDto(entity.EmpresaId, entity.NombreComercial, entity.RazonSocial, entity.Rut, entity.Estado, entity.MonedaCodigo, entity.TelefonoContacto, entity.CorreoContacto);
+    }
+
+    public async Task<EmpresaDto> UpdateEmpresaAsync(long empresaId, CreateEmpresaRequestDto request, CancellationToken cancellationToken)
+    {
+        if (!CurrentUser.IsInRole(RoleCodes.AdminTotal))
+        {
+            throw new InvalidOperationException("Solo ADMIN_TOTAL puede editar empresas.");
+        }
+
+        var entity = await DbContext.Empresas.FirstAsync(x => x.EmpresaId == empresaId, cancellationToken);
+        entity.NombreComercial = request.NombreComercial;
+        entity.RazonSocial = request.RazonSocial;
+        entity.Rut = request.Rut;
+        entity.TelefonoContacto = request.TelefonoContacto;
+        entity.CorreoContacto = request.CorreoContacto;
+        entity.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await DbContext.SaveChangesAsync(cancellationToken);
+        await AuditAsync("empresa", entity.EmpresaId, "actualizar", new { entity.NombreComercial, entity.Rut }, entity.EmpresaId, cancellationToken);
+
+        return new EmpresaDto(entity.EmpresaId, entity.NombreComercial, entity.RazonSocial, entity.Rut, entity.Estado, entity.MonedaCodigo, entity.TelefonoContacto, entity.CorreoContacto);
     }
 
     public async Task<IReadOnlyCollection<UsuarioDto>> GetUsuariosAsync(CancellationToken cancellationToken)
@@ -127,6 +151,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             .Select(group => new UsuarioDto(
                 group.Key,
                 group.First().Usuario.Persona.NombreCompleto,
+                group.First().Usuario.Persona.Rut,
                 group.First().Usuario.EmailLogin,
                 group.First().Usuario.Estado,
                 group.Select(x => x.Rol.Codigo).Distinct().ToArray(),
@@ -187,7 +212,96 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         await DbContext.SaveChangesAsync(cancellationToken);
         await AuditAsync("usuario", usuario.UsuarioId, "crear", new { usuario.EmailLogin, request.RolCodigo, targetEmpresaId }, targetEmpresaId, cancellationToken);
 
-        return new UsuarioDto(usuario.UsuarioId, request.NombreCompleto, usuario.EmailLogin, usuario.Estado, new[] { request.RolCodigo }, targetEmpresaId, targetEmpresaId.HasValue ? await DbContext.Empresas.Where(x => x.EmpresaId == targetEmpresaId).Select(x => x.NombreComercial).FirstAsync(cancellationToken) : null);
+        return new UsuarioDto(usuario.UsuarioId, request.NombreCompleto, request.Rut, usuario.EmailLogin, usuario.Estado, new[] { request.RolCodigo }, targetEmpresaId, targetEmpresaId.HasValue ? await DbContext.Empresas.Where(x => x.EmpresaId == targetEmpresaId).Select(x => x.NombreComercial).FirstAsync(cancellationToken) : null);
+    }
+
+    public async Task<UsuarioDto> UpdateUsuarioAsync(long usuarioId, UpdateUsuarioRequestDto request, CancellationToken cancellationToken)
+    {
+        var targetEmpresaId = request.EmpresaId;
+
+        if (CurrentUser.IsInRole(RoleCodes.AdminEmpresa))
+        {
+            targetEmpresaId = GetRequiredEmpresaId();
+
+            if (request.RolCodigo == RoleCodes.AdminTotal)
+            {
+                throw new InvalidOperationException("No puede asignar rol ADMIN_TOTAL.");
+            }
+        }
+
+        if (!CurrentUser.IsInRole(RoleCodes.AdminTotal) && !CurrentUser.IsInRole(RoleCodes.AdminEmpresa))
+        {
+            throw new InvalidOperationException("No tiene permisos para editar usuarios.");
+        }
+
+        var roleRowQuery = DbContext.UsuarioRoles
+            .Include(x => x.Usuario)
+            .ThenInclude(x => x.Persona)
+            .Include(x => x.Rol)
+            .Where(x => x.UsuarioId == usuarioId && x.Activo);
+
+        if (CurrentUser.IsInRole(RoleCodes.AdminEmpresa))
+        {
+            var empresaId = GetRequiredEmpresaId();
+            roleRowQuery = roleRowQuery.Where(x => x.EmpresaId == empresaId);
+        }
+
+        var roleRow = await roleRowQuery.OrderBy(x => x.UsuarioRolId).FirstAsync(cancellationToken);
+        var usuario = roleRow.Usuario;
+        var persona = usuario.Persona;
+        var rol = await DbContext.Roles.FirstAsync(x => x.Codigo == request.RolCodigo, cancellationToken);
+
+        persona.NombreCompleto = request.NombreCompleto;
+        persona.Rut = request.Rut;
+        persona.Correo = request.EmailLogin;
+        persona.UpdatedAt = DateTimeOffset.UtcNow;
+
+        usuario.EmailLogin = request.EmailLogin;
+        usuario.Estado = request.Estado;
+
+        roleRow.RolId = rol.RolId;
+        roleRow.EmpresaId = targetEmpresaId;
+
+        await DbContext.SaveChangesAsync(cancellationToken);
+
+        var empresaNombre = roleRow.EmpresaId.HasValue
+            ? await DbContext.Empresas.Where(x => x.EmpresaId == roleRow.EmpresaId).Select(x => x.NombreComercial).FirstOrDefaultAsync(cancellationToken)
+            : null;
+
+        await AuditAsync("usuario", usuario.UsuarioId, "actualizar", new { usuario.EmailLogin, request.RolCodigo, roleRow.EmpresaId }, roleRow.EmpresaId, cancellationToken);
+
+        return new UsuarioDto(usuario.UsuarioId, persona.NombreCompleto, persona.Rut, usuario.EmailLogin, usuario.Estado, new[] { request.RolCodigo }, roleRow.EmpresaId, empresaNombre);
+    }
+
+    public async Task ChangeUsuarioPasswordAsync(long usuarioId, ChangeUsuarioPasswordRequestDto request, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.NuevaPassword))
+        {
+            throw new InvalidOperationException("La nueva contraseña es obligatoria.");
+        }
+
+        if (!CurrentUser.IsInRole(RoleCodes.AdminTotal) && !CurrentUser.IsInRole(RoleCodes.AdminEmpresa))
+        {
+            throw new InvalidOperationException("No tiene permisos para cambiar contraseñas.");
+        }
+
+        var roleRowQuery = DbContext.UsuarioRoles
+            .Include(x => x.Usuario)
+            .Where(x => x.UsuarioId == usuarioId && x.Activo);
+
+        if (CurrentUser.IsInRole(RoleCodes.AdminEmpresa))
+        {
+            var empresaId = GetRequiredEmpresaId();
+            roleRowQuery = roleRowQuery.Where(x => x.EmpresaId == empresaId);
+        }
+
+        var roleRow = await roleRowQuery.OrderBy(x => x.UsuarioRolId).FirstOrDefaultAsync(cancellationToken)
+            ?? throw new InvalidOperationException("Usuario no encontrado para el contexto actual.");
+
+        roleRow.Usuario.PasswordHash = BCrypt.HashPassword(request.NuevaPassword);
+
+        await DbContext.SaveChangesAsync(cancellationToken);
+        await AuditAsync("usuario", usuarioId, "actualizar_password", new { usuarioId }, roleRow.EmpresaId, cancellationToken);
     }
 
     public async Task<IReadOnlyCollection<TipoClienteDto>> GetTiposClienteAsync(CancellationToken cancellationToken)
@@ -232,7 +346,8 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
 
         if (!string.IsNullOrWhiteSpace(search))
         {
-            query = query.Where(x => x.Persona.NombreCompleto.Contains(search) || x.Persona.Rut.Contains(search));
+            var searchTerm = $"%{search.Trim()}%";
+            query = query.Where(x => EF.Functions.ILike(x.Persona.NombreCompleto, searchTerm) || EF.Functions.ILike(x.Persona.Rut, searchTerm));
         }
 
         return await query
@@ -242,8 +357,10 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
                 x.PersonaId,
                 x.Persona.NombreCompleto,
                 x.Persona.Rut,
+                x.Persona.FechaNacimiento,
                 x.Persona.Correo,
                 x.Persona.Telefono,
+                x.TipoClienteId,
                 x.TipoCliente.Nombre,
                 x.Estado))
             .ToListAsync(cancellationToken);
@@ -252,14 +369,36 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
     public async Task<ClienteDto> CreateClienteAsync(UpsertClienteRequestDto request, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
-        var persona = await DbContext.Personas.FirstOrDefaultAsync(x => x.Rut == request.Rut, cancellationToken);
+        var nombreNormalizado = NormalizeName(request.NombreCompleto);
+        if (string.IsNullOrWhiteSpace(nombreNormalizado))
+        {
+            throw new InvalidOperationException("El nombre del cliente es obligatorio.");
+        }
+
+        var rutNormalizado = NormalizeRut(request.Rut);
+        if (!IsValidRut(rutNormalizado))
+        {
+            throw new InvalidOperationException("El RUT ingresado no es válido.");
+        }
+
+        var tipoClienteValido = await DbContext.TiposCliente
+            .AsNoTracking()
+            .AnyAsync(x => x.EmpresaId == empresaId && x.TipoClienteId == request.TipoClienteId && x.Activo, cancellationToken);
+
+        if (!tipoClienteValido)
+        {
+            throw new InvalidOperationException("Tipo de cliente inválido para la empresa actual.");
+        }
+
+        var estado = string.IsNullOrWhiteSpace(request.Estado) ? "activo" : request.Estado;
+        var persona = await DbContext.Personas.FirstOrDefaultAsync(x => x.Rut == rutNormalizado, cancellationToken);
 
         if (persona is null)
         {
             persona = new Persona
             {
-                Rut = request.Rut,
-                NombreCompleto = request.NombreCompleto,
+                Rut = rutNormalizado,
+                NombreCompleto = nombreNormalizado,
                 FechaNacimiento = request.FechaNacimiento,
                 Telefono = request.Telefono,
                 Correo = request.Correo,
@@ -281,7 +420,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             EmpresaId = empresaId,
             PersonaId = persona.PersonaId,
             TipoClienteId = request.TipoClienteId,
-            Estado = request.Estado,
+            Estado = estado,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         };
@@ -292,7 +431,58 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         var tipoClienteNombre = await DbContext.TiposCliente.Where(x => x.TipoClienteId == entity.TipoClienteId).Select(x => x.Nombre).FirstAsync(cancellationToken);
         await AuditAsync("cliente_empresa", entity.ClienteEmpresaId, "crear", new { persona.Rut, entity.TipoClienteId }, empresaId, cancellationToken);
 
-        return new ClienteDto(entity.ClienteEmpresaId, persona.PersonaId, persona.NombreCompleto, persona.Rut, persona.Correo, persona.Telefono, tipoClienteNombre, entity.Estado);
+        return new ClienteDto(entity.ClienteEmpresaId, persona.PersonaId, persona.NombreCompleto, persona.Rut, persona.FechaNacimiento, persona.Correo, persona.Telefono, entity.TipoClienteId, tipoClienteNombre, entity.Estado);
+    }
+
+    public async Task<ClienteDto> UpdateClienteAsync(long clienteEmpresaId, UpsertClienteRequestDto request, CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+        var nombreNormalizado = NormalizeName(request.NombreCompleto);
+        if (string.IsNullOrWhiteSpace(nombreNormalizado))
+        {
+            throw new InvalidOperationException("El nombre del cliente es obligatorio.");
+        }
+
+        var rutNormalizado = NormalizeRut(request.Rut);
+        if (!IsValidRut(rutNormalizado))
+        {
+            throw new InvalidOperationException("El RUT ingresado no es válido.");
+        }
+
+        var tipoClienteValido = await DbContext.TiposCliente
+            .AsNoTracking()
+            .AnyAsync(x => x.EmpresaId == empresaId && x.TipoClienteId == request.TipoClienteId, cancellationToken);
+
+        if (!tipoClienteValido)
+        {
+            throw new InvalidOperationException("Tipo de cliente inválido para la empresa actual.");
+        }
+
+        var estado = string.IsNullOrWhiteSpace(request.Estado) ? "activo" : request.Estado;
+
+        var entity = await DbContext.ClientesEmpresa
+            .Include(x => x.Persona)
+            .Include(x => x.TipoCliente)
+            .FirstAsync(x => x.ClienteEmpresaId == clienteEmpresaId && x.EmpresaId == empresaId, cancellationToken);
+
+        var persona = entity.Persona;
+        persona.NombreCompleto = nombreNormalizado;
+        persona.Rut = rutNormalizado;
+        persona.FechaNacimiento = request.FechaNacimiento;
+        persona.Telefono = request.Telefono;
+        persona.Correo = request.Correo;
+        persona.UpdatedAt = DateTimeOffset.UtcNow;
+
+        entity.TipoClienteId = request.TipoClienteId;
+        entity.Estado = estado;
+        entity.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await DbContext.SaveChangesAsync(cancellationToken);
+
+        var tipoClienteNombre = await DbContext.TiposCliente.Where(x => x.TipoClienteId == entity.TipoClienteId).Select(x => x.Nombre).FirstAsync(cancellationToken);
+        await AuditAsync("cliente_empresa", entity.ClienteEmpresaId, "actualizar", new { persona.Rut, entity.TipoClienteId, entity.Estado }, empresaId, cancellationToken);
+
+        return new ClienteDto(entity.ClienteEmpresaId, persona.PersonaId, persona.NombreCompleto, persona.Rut, persona.FechaNacimiento, persona.Correo, persona.Telefono, entity.TipoClienteId, tipoClienteNombre, entity.Estado);
     }
 
     public async Task<IReadOnlyCollection<ProductoDto>> GetProductosAsync(CancellationToken cancellationToken)
@@ -307,6 +497,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             .Select(x => new ProductoDto(
                 x.ProductoEmpresaId,
                 x.NombreComercial,
+                x.Descripcion,
                 x.TipoProductoBase.Codigo,
                 x.ModoPrecio,
                 x.PrecioFijo,
@@ -325,24 +516,44 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
     public async Task<ProductoDto> CreateProductoAsync(UpsertProductoRequestDto request, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
+        var tipoProductoBase = await DbContext.TiposProductoBase
+            .AsNoTracking()
+            .FirstAsync(x => x.TipoProductoBaseId == request.TipoProductoBaseId, cancellationToken);
+
+        var normalizedRequest = NormalizeProductoRequestByType(request, tipoProductoBase.Codigo);
+
+        if (tipoProductoBase.Codigo == ProductBaseCodes.MensualidadPorHorario)
+        {
+            if (!normalizedRequest.BloqueHorarioComercialId.HasValue)
+            {
+                throw new InvalidOperationException("La mensualidad por horario requiere un bloque horario comercial.");
+            }
+
+            await EnsureActiveBloqueHorarioAsync(empresaId, normalizedRequest.BloqueHorarioComercialId.Value, cancellationToken);
+
+            if (normalizedRequest.Activo)
+            {
+                await ValidateMensualidadPorHorarioOverlapAsync(empresaId, normalizedRequest.BloqueHorarioComercialId.Value, null, cancellationToken);
+            }
+        }
 
         var entity = new ProductoEmpresa
         {
             EmpresaId = empresaId,
-            TipoProductoBaseId = request.TipoProductoBaseId,
-            NombreComercial = request.NombreComercial,
-            Descripcion = request.Descripcion,
-            ModoPrecio = request.ModoPrecio,
-            PrecioFijo = request.PrecioFijo,
-            VisiblePos = request.VisiblePos,
-            Activo = request.Activo,
-            RequiereCliente = request.RequiereCliente,
-            GeneraBeneficio = request.GeneraBeneficio,
-            BloqueHorarioComercialId = request.BloqueHorarioComercialId,
-            ClaseId = request.ClaseId,
-            VigenciaDias = request.VigenciaDias,
-            UsosIncluidos = request.UsosIncluidos,
-            AccesoIlimitado = request.AccesoIlimitado,
+            TipoProductoBaseId = normalizedRequest.TipoProductoBaseId,
+            NombreComercial = normalizedRequest.NombreComercial,
+            Descripcion = normalizedRequest.Descripcion,
+            ModoPrecio = normalizedRequest.ModoPrecio,
+            PrecioFijo = normalizedRequest.PrecioFijo,
+            VisiblePos = normalizedRequest.VisiblePos,
+            Activo = normalizedRequest.Activo,
+            RequiereCliente = normalizedRequest.RequiereCliente,
+            GeneraBeneficio = normalizedRequest.GeneraBeneficio,
+            BloqueHorarioComercialId = normalizedRequest.BloqueHorarioComercialId,
+            ClaseId = normalizedRequest.ClaseId,
+            VigenciaDias = normalizedRequest.VigenciaDias,
+            UsosIncluidos = normalizedRequest.UsosIncluidos,
+            AccesoIlimitado = normalizedRequest.AccesoIlimitado,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         };
@@ -350,10 +561,59 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         DbContext.ProductosEmpresa.Add(entity);
         await DbContext.SaveChangesAsync(cancellationToken);
 
-        var tipoCodigo = await DbContext.TiposProductoBase.Where(x => x.TipoProductoBaseId == request.TipoProductoBaseId).Select(x => x.Codigo).FirstAsync(cancellationToken);
-        await AuditAsync("producto_empresa", entity.ProductoEmpresaId, "crear", request, empresaId, cancellationToken);
+        await AuditAsync("producto_empresa", entity.ProductoEmpresaId, "crear", normalizedRequest, empresaId, cancellationToken);
 
-        return new ProductoDto(entity.ProductoEmpresaId, entity.NombreComercial, tipoCodigo, entity.ModoPrecio, entity.PrecioFijo, entity.VisiblePos, entity.Activo, entity.RequiereCliente, entity.GeneraBeneficio, entity.BloqueHorarioComercialId, entity.ClaseId, entity.VigenciaDias, entity.UsosIncluidos, entity.AccesoIlimitado);
+        return new ProductoDto(entity.ProductoEmpresaId, entity.NombreComercial, entity.Descripcion, tipoProductoBase.Codigo, entity.ModoPrecio, entity.PrecioFijo, entity.VisiblePos, entity.Activo, entity.RequiereCliente, entity.GeneraBeneficio, entity.BloqueHorarioComercialId, entity.ClaseId, entity.VigenciaDias, entity.UsosIncluidos, entity.AccesoIlimitado);
+    }
+
+    public async Task<ProductoDto> UpdateProductoAsync(long productoEmpresaId, UpsertProductoRequestDto request, CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+        var tipoProductoBase = await DbContext.TiposProductoBase
+            .AsNoTracking()
+            .FirstAsync(x => x.TipoProductoBaseId == request.TipoProductoBaseId, cancellationToken);
+
+        var normalizedRequest = NormalizeProductoRequestByType(request, tipoProductoBase.Codigo);
+
+        if (tipoProductoBase.Codigo == ProductBaseCodes.MensualidadPorHorario)
+        {
+            if (!normalizedRequest.BloqueHorarioComercialId.HasValue)
+            {
+                throw new InvalidOperationException("La mensualidad por horario requiere un bloque horario comercial.");
+            }
+
+            await EnsureActiveBloqueHorarioAsync(empresaId, normalizedRequest.BloqueHorarioComercialId.Value, cancellationToken);
+
+            if (normalizedRequest.Activo)
+            {
+                await ValidateMensualidadPorHorarioOverlapAsync(empresaId, normalizedRequest.BloqueHorarioComercialId.Value, productoEmpresaId, cancellationToken);
+            }
+        }
+
+        var entity = await DbContext.ProductosEmpresa
+            .FirstAsync(x => x.ProductoEmpresaId == productoEmpresaId && x.EmpresaId == empresaId, cancellationToken);
+
+        entity.TipoProductoBaseId = normalizedRequest.TipoProductoBaseId;
+        entity.NombreComercial = normalizedRequest.NombreComercial;
+        entity.Descripcion = normalizedRequest.Descripcion;
+        entity.ModoPrecio = normalizedRequest.ModoPrecio;
+        entity.PrecioFijo = normalizedRequest.PrecioFijo;
+        entity.VisiblePos = normalizedRequest.VisiblePos;
+        entity.Activo = normalizedRequest.Activo;
+        entity.RequiereCliente = normalizedRequest.RequiereCliente;
+        entity.GeneraBeneficio = normalizedRequest.GeneraBeneficio;
+        entity.BloqueHorarioComercialId = normalizedRequest.BloqueHorarioComercialId;
+        entity.ClaseId = normalizedRequest.ClaseId;
+        entity.VigenciaDias = normalizedRequest.VigenciaDias;
+        entity.UsosIncluidos = normalizedRequest.UsosIncluidos;
+        entity.AccesoIlimitado = normalizedRequest.AccesoIlimitado;
+        entity.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await DbContext.SaveChangesAsync(cancellationToken);
+
+        await AuditAsync("producto_empresa", entity.ProductoEmpresaId, "actualizar", normalizedRequest, empresaId, cancellationToken);
+
+        return new ProductoDto(entity.ProductoEmpresaId, entity.NombreComercial, entity.Descripcion, tipoProductoBase.Codigo, entity.ModoPrecio, entity.PrecioFijo, entity.VisiblePos, entity.Activo, entity.RequiereCliente, entity.GeneraBeneficio, entity.BloqueHorarioComercialId, entity.ClaseId, entity.VigenciaDias, entity.UsosIncluidos, entity.AccesoIlimitado);
     }
 
     public async Task<IReadOnlyCollection<TarifaDto>> GetTarifasAsync(CancellationToken cancellationToken)
@@ -426,6 +686,50 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         return new TarifaDto(entity.TarifaProductoId, entity.ProductoEmpresaId, producto.NombreComercial, entity.TipoClienteId, tipoClienteNombre, entity.TipoDia, entity.BloqueHorarioComercialId, entity.Precio, entity.VigenciaDesde, entity.VigenciaHasta, entity.Activo);
     }
 
+    public async Task<TarifaDto> UpdateTarifaAsync(long tarifaProductoId, UpsertTarifaRequestDto request, CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+
+        var producto = await DbContext.ProductosEmpresa.FirstAsync(x => x.ProductoEmpresaId == request.ProductoEmpresaId && x.EmpresaId == empresaId, cancellationToken);
+
+        var entity = await DbContext.TarifasProducto
+            .Join(DbContext.ProductosEmpresa.Where(p => p.EmpresaId == empresaId), t => t.ProductoEmpresaId, p => p.ProductoEmpresaId, (t, p) => t)
+            .FirstAsync(x => x.TarifaProductoId == tarifaProductoId, cancellationToken);
+
+        var overlaps = await DbContext.TarifasProducto.AnyAsync(x =>
+            x.TarifaProductoId != tarifaProductoId &&
+            x.ProductoEmpresaId == request.ProductoEmpresaId &&
+            x.TipoClienteId == request.TipoClienteId &&
+            x.TipoDia == request.TipoDia &&
+            x.BloqueHorarioComercialId == request.BloqueHorarioComercialId &&
+            x.VigenciaDesde <= request.VigenciaHasta &&
+            request.VigenciaDesde <= x.VigenciaHasta,
+            cancellationToken);
+
+        if (overlaps)
+        {
+            throw new InvalidOperationException("Ya existe una tarifa solapada para esa combinación.");
+        }
+
+        entity.ProductoEmpresaId = request.ProductoEmpresaId;
+        entity.TipoClienteId = request.TipoClienteId;
+        entity.TipoDia = request.TipoDia;
+        entity.BloqueHorarioComercialId = request.BloqueHorarioComercialId;
+        entity.Precio = request.Precio;
+        entity.VigenciaDesde = request.VigenciaDesde;
+        entity.VigenciaHasta = request.VigenciaHasta;
+        entity.Activo = request.Activo;
+
+        await DbContext.SaveChangesAsync(cancellationToken);
+        await AuditAsync("tarifa_producto", entity.TarifaProductoId, "actualizar", request, empresaId, cancellationToken);
+
+        var tipoClienteNombre = entity.TipoClienteId.HasValue
+            ? await DbContext.TiposCliente.Where(x => x.TipoClienteId == entity.TipoClienteId).Select(x => x.Nombre).FirstOrDefaultAsync(cancellationToken)
+            : null;
+
+        return new TarifaDto(entity.TarifaProductoId, entity.ProductoEmpresaId, producto.NombreComercial, entity.TipoClienteId, tipoClienteNombre, entity.TipoDia, entity.BloqueHorarioComercialId, entity.Precio, entity.VigenciaDesde, entity.VigenciaHasta, entity.Activo);
+    }
+
     public async Task<IReadOnlyCollection<ClaseDto>> GetClasesAsync(CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
@@ -477,5 +781,160 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         await AuditAsync("clase", entity.ClaseId, "crear", request, empresaId, cancellationToken);
 
         return new ClaseDto(entity.ClaseId, entity.Nombre, entity.ProfesorEmpresaId, profesor.Persona.NombreCompleto, entity.CupoMaximo, entity.Estado, entity.Horarios.Select(h => new ClaseHorarioDto(h.ClaseHorarioId, h.DiaSemana, h.HoraInicio, h.HoraFin, h.Activo)).ToArray());
+    }
+
+    public async Task<ClaseDto> UpdateClaseAsync(long claseId, UpsertClaseRequestDto request, CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+        var profesor = await DbContext.ProfesoresEmpresa
+            .Include(x => x.Persona)
+            .FirstAsync(x => x.ProfesorEmpresaId == request.ProfesorEmpresaId && x.EmpresaId == empresaId, cancellationToken);
+
+        var entity = await DbContext.Clases
+            .Include(x => x.Horarios)
+            .FirstAsync(x => x.ClaseId == claseId && x.EmpresaId == empresaId, cancellationToken);
+
+        entity.Nombre = request.Nombre;
+        entity.ProfesorEmpresaId = request.ProfesorEmpresaId;
+        entity.CupoMaximo = request.CupoMaximo;
+        entity.Estado = request.Estado;
+
+        DbContext.ClaseHorarios.RemoveRange(entity.Horarios);
+        entity.Horarios = request.Horarios.Select(h => new ClaseHorario
+        {
+            DiaSemana = h.DiaSemana,
+            HoraInicio = h.HoraInicio,
+            HoraFin = h.HoraFin,
+            Activo = h.Activo
+        }).ToList();
+
+        await DbContext.SaveChangesAsync(cancellationToken);
+        await AuditAsync("clase", entity.ClaseId, "actualizar", request, empresaId, cancellationToken);
+
+        return new ClaseDto(entity.ClaseId, entity.Nombre, entity.ProfesorEmpresaId, profesor.Persona.NombreCompleto, entity.CupoMaximo, entity.Estado, entity.Horarios.Select(h => new ClaseHorarioDto(h.ClaseHorarioId, h.DiaSemana, h.HoraInicio, h.HoraFin, h.Activo)).ToArray());
+    }
+
+    private static UpsertProductoRequestDto NormalizeProductoRequestByType(UpsertProductoRequestDto request, string tipoCodigo)
+    {
+        if (tipoCodigo is not ProductBaseCodes.MensualidadPorHorario and not ProductBaseCodes.MensualidadTodoHorario)
+        {
+            return request;
+        }
+
+        return request with
+        {
+            ModoPrecio = "tarifa",
+            PrecioFijo = null,
+            RequiereCliente = true,
+            GeneraBeneficio = true,
+            BloqueHorarioComercialId = tipoCodigo == ProductBaseCodes.MensualidadPorHorario ? request.BloqueHorarioComercialId : null,
+            ClaseId = null,
+            VigenciaDias = 30,
+            UsosIncluidos = null,
+            AccesoIlimitado = true,
+        };
+    }
+
+    private async Task EnsureActiveBloqueHorarioAsync(long empresaId, long bloqueHorarioComercialId, CancellationToken cancellationToken)
+    {
+        var exists = await DbContext.BloquesHorariosComerciales
+            .AsNoTracking()
+            .AnyAsync(x => x.EmpresaId == empresaId && x.BloqueHorarioComercialId == bloqueHorarioComercialId && x.Activo, cancellationToken);
+
+        if (!exists)
+        {
+            throw new InvalidOperationException("El bloque horario seleccionado no existe o no está activo para la empresa.");
+        }
+    }
+
+    private async Task ValidateMensualidadPorHorarioOverlapAsync(long empresaId, long bloqueHorarioComercialId, long? excludeProductoEmpresaId, CancellationToken cancellationToken)
+    {
+        var selectedBloque = await DbContext.BloquesHorariosComerciales
+            .AsNoTracking()
+            .Where(x => x.EmpresaId == empresaId && x.BloqueHorarioComercialId == bloqueHorarioComercialId)
+            .Select(x => new { x.BloqueHorarioComercialId, x.Nombre, x.HoraInicio, x.HoraFin })
+            .FirstOrDefaultAsync(cancellationToken)
+            ?? throw new InvalidOperationException("El bloque horario seleccionado no existe para la empresa.");
+
+        var overlapping = await DbContext.ProductosEmpresa
+            .AsNoTracking()
+            .Join(
+                DbContext.TiposProductoBase.AsNoTracking().Where(x => x.Codigo == ProductBaseCodes.MensualidadPorHorario),
+                producto => producto.TipoProductoBaseId,
+                tipo => tipo.TipoProductoBaseId,
+                (producto, _) => producto)
+            .Where(x => x.EmpresaId == empresaId && x.Activo && x.BloqueHorarioComercialId.HasValue && (!excludeProductoEmpresaId.HasValue || x.ProductoEmpresaId != excludeProductoEmpresaId.Value))
+            .Join(
+                DbContext.BloquesHorariosComerciales.AsNoTracking(),
+                producto => producto.BloqueHorarioComercialId!.Value,
+                bloque => bloque.BloqueHorarioComercialId,
+                (producto, bloque) => new { producto, bloque })
+            .Where(x => selectedBloque.HoraInicio < x.bloque.HoraFin && x.bloque.HoraInicio < selectedBloque.HoraFin)
+            .Select(x => new { x.producto.NombreComercial, x.bloque.Nombre, x.bloque.HoraInicio, x.bloque.HoraFin })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (overlapping is not null)
+        {
+            throw new InvalidOperationException($"El bloque horario seleccionado se solapa con la mensualidad activa '{overlapping.NombreComercial}' ({overlapping.Nombre} {overlapping.HoraInicio:HH\\:mm}-{overlapping.HoraFin:HH\\:mm}).");
+        }
+    }
+
+    private static string NormalizeName(string value)
+    {
+        return value.Trim().ToLowerInvariant();
+    }
+
+    private static string NormalizeRut(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var alphanumeric = new string(value.Where(c => char.IsDigit(c) || c is 'k' or 'K').ToArray()).ToUpperInvariant();
+        if (alphanumeric.Length < 2)
+        {
+            return string.Empty;
+        }
+
+        var body = alphanumeric[..^1];
+        var dv = alphanumeric[^1];
+
+        return $"{body}-{dv}";
+    }
+
+    private static bool IsValidRut(string rut)
+    {
+        if (string.IsNullOrWhiteSpace(rut))
+        {
+            return false;
+        }
+
+        var parts = rut.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length != 2 || !parts[0].All(char.IsDigit))
+        {
+            return false;
+        }
+
+        var body = parts[0];
+        var dv = char.ToUpperInvariant(parts[1][0]);
+        var sum = 0;
+        var multiplier = 2;
+
+        for (var i = body.Length - 1; i >= 0; i--)
+        {
+            sum += (body[i] - '0') * multiplier;
+            multiplier = multiplier == 7 ? 2 : multiplier + 1;
+        }
+
+        var remainder = 11 - (sum % 11);
+        var expected = remainder switch
+        {
+            11 => '0',
+            10 => 'K',
+            _ => remainder.ToString()[0]
+        };
+
+        return dv == expected;
     }
 }
