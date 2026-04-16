@@ -22,7 +22,7 @@ public sealed class VentasService : ServiceBase, IVentasService
         return await DbContext.ProductosEmpresa
             .AsNoTracking()
             .Include(x => x.TipoProductoBase)
-            .Where(x => x.EmpresaId == empresaId && x.Activo && x.VisiblePos)
+            .Where(x => x.EmpresaId == empresaId && x.Activo && x.VisiblePos && (x.ModoPrecio != "tarifa" || x.TarifaAsociada))
             .OrderBy(x => x.NombreComercial)
             .Select(x => new PosCatalogItemDto(
                 x.ProductoEmpresaId,
@@ -367,16 +367,17 @@ public sealed class VentasService : ServiceBase, IVentasService
         var today = DateOnly.FromDateTime(now.Date);
         var tipoDia = await GetTipoDiaAsync(today, cancellationToken);
 
-        var tarifa = await DbContext.TarifasProducto
+        var tarifas = await DbContext.TarifasProducto
             .Where(x => x.ProductoEmpresaId == producto.ProductoEmpresaId
                 && x.Activo
                 && x.VigenciaDesde <= today
                 && today <= x.VigenciaHasta
-                && x.TipoDia == tipoDia
                 && x.TipoClienteId == tipoClienteId
                 && x.BloqueHorarioComercialId == producto.BloqueHorarioComercialId)
             .OrderByDescending(x => x.VigenciaDesde)
-            .FirstOrDefaultAsync(cancellationToken);
+            .ToListAsync(cancellationToken);
+
+        var tarifa = tarifas.FirstOrDefault(x => MatchesTipoDia(x.TipoDia, tipoDia));
 
         if (tarifa is null)
         {
@@ -384,6 +385,20 @@ public sealed class VentasService : ServiceBase, IVentasService
         }
 
         return tarifa.Precio;
+    }
+
+    private static bool MatchesTipoDia(string? tipoDiaCsv, string tipoDia)
+    {
+        if (string.IsNullOrWhiteSpace(tipoDiaCsv))
+        {
+            return false;
+        }
+
+        var values = tipoDiaCsv
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => x.ToUpperInvariant());
+
+        return values.Any(value => value == tipoDia || (value == "DOM_FEST" && tipoDia == "DOM"));
     }
 
     private async Task<BeneficioCliente> BuildBenefitAsync(long empresaId, long clienteEmpresaId, Domain.Entities.Administracion.ProductoEmpresa producto, VentaDetalle detalle, CancellationToken cancellationToken)

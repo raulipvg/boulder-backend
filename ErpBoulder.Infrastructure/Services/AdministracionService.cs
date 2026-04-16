@@ -580,6 +580,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
                 x.PrecioFijo,
                 x.VisiblePos,
                 x.Activo,
+                x.TarifaAsociada,
                 x.RequiereCliente,
                 x.GeneraBeneficio,
                 x.BloqueHorarioComercialId,
@@ -598,6 +599,16 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             .FirstAsync(x => x.TipoProductoBaseId == request.TipoProductoBaseId, cancellationToken);
 
         var normalizedRequest = NormalizeProductoRequestByType(request, tipoProductoBase.Codigo);
+        var tarifaAsociada = false;
+
+        if (normalizedRequest.ModoPrecio == "tarifa")
+        {
+            normalizedRequest = normalizedRequest with
+            {
+                Activo = false,
+                VisiblePos = false,
+            };
+        }
 
         if (tipoProductoBase.Codigo == ProductBaseCodes.MensualidadPorHorario)
         {
@@ -639,6 +650,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             PrecioFijo = normalizedRequest.PrecioFijo,
             VisiblePos = normalizedRequest.VisiblePos,
             Activo = normalizedRequest.Activo,
+            TarifaAsociada = tarifaAsociada,
             RequiereCliente = normalizedRequest.RequiereCliente,
             GeneraBeneficio = normalizedRequest.GeneraBeneficio,
             BloqueHorarioComercialId = normalizedRequest.BloqueHorarioComercialId,
@@ -655,17 +667,34 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
 
         await AuditAsync("producto_empresa", entity.ProductoEmpresaId, "crear", normalizedRequest, empresaId, cancellationToken);
 
-        return new ProductoDto(entity.ProductoEmpresaId, entity.NombreComercial, entity.Descripcion, tipoProductoBase.Codigo, entity.ModoPrecio, entity.PrecioFijo, entity.VisiblePos, entity.Activo, entity.RequiereCliente, entity.GeneraBeneficio, entity.BloqueHorarioComercialId, entity.ClaseId, entity.VigenciaDias, entity.UsosIncluidos, entity.AccesoIlimitado);
+        return new ProductoDto(entity.ProductoEmpresaId, entity.NombreComercial, entity.Descripcion, tipoProductoBase.Codigo, entity.ModoPrecio, entity.PrecioFijo, entity.VisiblePos, entity.Activo, entity.TarifaAsociada, entity.RequiereCliente, entity.GeneraBeneficio, entity.BloqueHorarioComercialId, entity.ClaseId, entity.VigenciaDias, entity.UsosIncluidos, entity.AccesoIlimitado);
     }
 
     public async Task<ProductoDto> UpdateProductoAsync(long productoEmpresaId, UpsertProductoRequestDto request, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
+        var entity = await DbContext.ProductosEmpresa
+            .FirstAsync(x => x.ProductoEmpresaId == productoEmpresaId && x.EmpresaId == empresaId, cancellationToken);
+
+        var hasActiveTarifaAsociada = await DbContext.TarifasProducto
+            .AsNoTracking()
+            .AnyAsync(x => x.ProductoEmpresaId == productoEmpresaId && x.Activo, cancellationToken);
+
         var tipoProductoBase = await DbContext.TiposProductoBase
             .AsNoTracking()
             .FirstAsync(x => x.TipoProductoBaseId == request.TipoProductoBaseId, cancellationToken);
 
         var normalizedRequest = NormalizeProductoRequestByType(request, tipoProductoBase.Codigo);
+        var tarifaAsociada = normalizedRequest.ModoPrecio == "tarifa" && hasActiveTarifaAsociada;
+
+        if (normalizedRequest.ModoPrecio == "tarifa" && !tarifaAsociada)
+        {
+            normalizedRequest = normalizedRequest with
+            {
+                Activo = false,
+                VisiblePos = false,
+            };
+        }
 
         if (tipoProductoBase.Codigo == ProductBaseCodes.MensualidadPorHorario)
         {
@@ -697,9 +726,6 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             ValidateTicketIndividualConfiguration(normalizedRequest);
         }
 
-        var entity = await DbContext.ProductosEmpresa
-            .FirstAsync(x => x.ProductoEmpresaId == productoEmpresaId && x.EmpresaId == empresaId, cancellationToken);
-
         entity.TipoProductoBaseId = normalizedRequest.TipoProductoBaseId;
         entity.NombreComercial = normalizedRequest.NombreComercial;
         entity.Descripcion = normalizedRequest.Descripcion;
@@ -707,6 +733,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         entity.PrecioFijo = normalizedRequest.PrecioFijo;
         entity.VisiblePos = normalizedRequest.VisiblePos;
         entity.Activo = normalizedRequest.Activo;
+        entity.TarifaAsociada = tarifaAsociada;
         entity.RequiereCliente = normalizedRequest.RequiereCliente;
         entity.GeneraBeneficio = normalizedRequest.GeneraBeneficio;
         entity.BloqueHorarioComercialId = normalizedRequest.BloqueHorarioComercialId;
@@ -720,16 +747,31 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
 
         await AuditAsync("producto_empresa", entity.ProductoEmpresaId, "actualizar", normalizedRequest, empresaId, cancellationToken);
 
-        return new ProductoDto(entity.ProductoEmpresaId, entity.NombreComercial, entity.Descripcion, tipoProductoBase.Codigo, entity.ModoPrecio, entity.PrecioFijo, entity.VisiblePos, entity.Activo, entity.RequiereCliente, entity.GeneraBeneficio, entity.BloqueHorarioComercialId, entity.ClaseId, entity.VigenciaDias, entity.UsosIncluidos, entity.AccesoIlimitado);
+        return new ProductoDto(entity.ProductoEmpresaId, entity.NombreComercial, entity.Descripcion, tipoProductoBase.Codigo, entity.ModoPrecio, entity.PrecioFijo, entity.VisiblePos, entity.Activo, entity.TarifaAsociada, entity.RequiereCliente, entity.GeneraBeneficio, entity.BloqueHorarioComercialId, entity.ClaseId, entity.VigenciaDias, entity.UsosIncluidos, entity.AccesoIlimitado);
     }
 
-    public async Task<IReadOnlyCollection<TarifaDto>> GetTarifasAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyCollection<TarifaDto>> GetTarifasAsync(string? tipoClienteCodigo, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
+        var normalizedTipoClienteCodigo = string.IsNullOrWhiteSpace(tipoClienteCodigo)
+            ? "GENERAL"
+            : tipoClienteCodigo.Trim().ToUpperInvariant();
+
+        var tipoCliente = await DbContext.TiposCliente
+            .AsNoTracking()
+            .Where(x => x.EmpresaId == empresaId && x.Codigo == normalizedTipoClienteCodigo)
+            .Select(x => new { x.TipoClienteId })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (tipoCliente is null)
+        {
+            return Array.Empty<TarifaDto>();
+        }
 
         var tarifas = await DbContext.TarifasProducto
             .AsNoTracking()
             .Join(DbContext.ProductosEmpresa.Where(p => p.EmpresaId == empresaId), x => x.ProductoEmpresaId, y => y.ProductoEmpresaId, (tarifa, producto) => new { tarifa, producto })
+            .Where(x => x.tarifa.TipoClienteId == tipoCliente.TipoClienteId)
             .ToListAsync(cancellationToken);
 
         var tipoClienteIds = tarifas.Select(x => x.tarifa.TipoClienteId).Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToList();
@@ -752,28 +794,32 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
     public async Task<TarifaDto> CreateTarifaAsync(UpsertTarifaRequestDto request, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
+        var tipoDiaNormalizado = NormalizeTipoDiaCsv(request.TipoDia);
 
         var producto = await DbContext.ProductosEmpresa.FirstAsync(x => x.ProductoEmpresaId == request.ProductoEmpresaId && x.EmpresaId == empresaId, cancellationToken);
-
-        var overlaps = await DbContext.TarifasProducto.AnyAsync(x =>
-            x.ProductoEmpresaId == request.ProductoEmpresaId &&
-            x.TipoClienteId == request.TipoClienteId &&
-            x.TipoDia == request.TipoDia &&
-            x.BloqueHorarioComercialId == request.BloqueHorarioComercialId &&
-            x.VigenciaDesde <= request.VigenciaHasta &&
-            request.VigenciaDesde <= x.VigenciaHasta,
-            cancellationToken);
-
-        if (overlaps)
+        if (producto.ModoPrecio != "tarifa")
         {
-            throw new InvalidOperationException("Ya existe una tarifa solapada para esa combinación.");
+            throw new InvalidOperationException("Solo se pueden asociar tarifas a productos con modo de precio 'tarifa'.");
+        }
+
+        if (request.Activo)
+        {
+            await ValidateActiveTarifaOverlapAsync(
+                request.ProductoEmpresaId,
+                request.TipoClienteId,
+                request.BloqueHorarioComercialId,
+                tipoDiaNormalizado,
+                request.VigenciaDesde,
+                request.VigenciaHasta,
+                null,
+                cancellationToken);
         }
 
         var entity = new TarifaProducto
         {
             ProductoEmpresaId = request.ProductoEmpresaId,
             TipoClienteId = request.TipoClienteId,
-            TipoDia = request.TipoDia,
+            TipoDia = tipoDiaNormalizado,
             BloqueHorarioComercialId = request.BloqueHorarioComercialId,
             Precio = request.Precio,
             VigenciaDesde = request.VigenciaDesde,
@@ -784,6 +830,13 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
 
         DbContext.TarifasProducto.Add(entity);
         await DbContext.SaveChangesAsync(cancellationToken);
+
+        var productoActualizado = await RefreshProductoTarifaAsociadaAsync(empresaId, entity.ProductoEmpresaId, cancellationToken);
+        if (productoActualizado)
+        {
+            await DbContext.SaveChangesAsync(cancellationToken);
+        }
+
         await AuditAsync("tarifa_producto", entity.TarifaProductoId, "crear", request, empresaId, cancellationToken);
 
         var tipoClienteNombre = entity.TipoClienteId.HasValue
@@ -796,31 +849,35 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
     public async Task<TarifaDto> UpdateTarifaAsync(long tarifaProductoId, UpsertTarifaRequestDto request, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
+        var tipoDiaNormalizado = NormalizeTipoDiaCsv(request.TipoDia);
 
         var producto = await DbContext.ProductosEmpresa.FirstAsync(x => x.ProductoEmpresaId == request.ProductoEmpresaId && x.EmpresaId == empresaId, cancellationToken);
+        if (producto.ModoPrecio != "tarifa")
+        {
+            throw new InvalidOperationException("Solo se pueden asociar tarifas a productos con modo de precio 'tarifa'.");
+        }
 
         var entity = await DbContext.TarifasProducto
             .Join(DbContext.ProductosEmpresa.Where(p => p.EmpresaId == empresaId), t => t.ProductoEmpresaId, p => p.ProductoEmpresaId, (t, p) => t)
             .FirstAsync(x => x.TarifaProductoId == tarifaProductoId, cancellationToken);
+        var previousProductoEmpresaId = entity.ProductoEmpresaId;
 
-        var overlaps = await DbContext.TarifasProducto.AnyAsync(x =>
-            x.TarifaProductoId != tarifaProductoId &&
-            x.ProductoEmpresaId == request.ProductoEmpresaId &&
-            x.TipoClienteId == request.TipoClienteId &&
-            x.TipoDia == request.TipoDia &&
-            x.BloqueHorarioComercialId == request.BloqueHorarioComercialId &&
-            x.VigenciaDesde <= request.VigenciaHasta &&
-            request.VigenciaDesde <= x.VigenciaHasta,
-            cancellationToken);
-
-        if (overlaps)
+        if (request.Activo)
         {
-            throw new InvalidOperationException("Ya existe una tarifa solapada para esa combinación.");
+            await ValidateActiveTarifaOverlapAsync(
+                request.ProductoEmpresaId,
+                request.TipoClienteId,
+                request.BloqueHorarioComercialId,
+                tipoDiaNormalizado,
+                request.VigenciaDesde,
+                request.VigenciaHasta,
+                tarifaProductoId,
+                cancellationToken);
         }
 
         entity.ProductoEmpresaId = request.ProductoEmpresaId;
         entity.TipoClienteId = request.TipoClienteId;
-        entity.TipoDia = request.TipoDia;
+        entity.TipoDia = tipoDiaNormalizado;
         entity.BloqueHorarioComercialId = request.BloqueHorarioComercialId;
         entity.Precio = request.Precio;
         entity.VigenciaDesde = request.VigenciaDesde;
@@ -828,6 +885,17 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         entity.Activo = request.Activo;
 
         await DbContext.SaveChangesAsync(cancellationToken);
+
+        var oldProductoActualizado = await RefreshProductoTarifaAsociadaAsync(empresaId, previousProductoEmpresaId, cancellationToken);
+        var newProductoActualizado = previousProductoEmpresaId == entity.ProductoEmpresaId
+            ? false
+            : await RefreshProductoTarifaAsociadaAsync(empresaId, entity.ProductoEmpresaId, cancellationToken);
+
+        if (oldProductoActualizado || newProductoActualizado)
+        {
+            await DbContext.SaveChangesAsync(cancellationToken);
+        }
+
         await AuditAsync("tarifa_producto", entity.TarifaProductoId, "actualizar", request, empresaId, cancellationToken);
 
         var tipoClienteNombre = entity.TipoClienteId.HasValue
@@ -998,6 +1066,100 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         }
 
         return request;
+    }
+
+    private async Task ValidateActiveTarifaOverlapAsync(
+        long productoEmpresaId,
+        long? tipoClienteId,
+        long? bloqueHorarioComercialId,
+        string tipoDiaCsv,
+        DateOnly vigenciaDesde,
+        DateOnly vigenciaHasta,
+        long? excludeTarifaProductoId,
+        CancellationToken cancellationToken)
+    {
+        if (vigenciaHasta < vigenciaDesde)
+        {
+            throw new InvalidOperationException("La vigencia hasta no puede ser anterior a la vigencia desde.");
+        }
+
+        var query = DbContext.TarifasProducto
+            .AsNoTracking()
+            .Where(x =>
+                x.Activo &&
+                x.ProductoEmpresaId == productoEmpresaId &&
+                x.TipoClienteId == tipoClienteId &&
+                x.BloqueHorarioComercialId == bloqueHorarioComercialId &&
+                x.VigenciaDesde <= vigenciaHasta &&
+                vigenciaDesde <= x.VigenciaHasta);
+
+        if (excludeTarifaProductoId.HasValue)
+        {
+            query = query.Where(x => x.TarifaProductoId != excludeTarifaProductoId.Value);
+        }
+
+        var candidates = await query
+            .Select(x => new { x.TarifaProductoId, x.TipoDia, x.VigenciaDesde, x.VigenciaHasta })
+            .ToListAsync(cancellationToken);
+
+        var hasOverlap = candidates.Any(candidate =>
+        {
+            var existingTipoDia = string.IsNullOrWhiteSpace(candidate.TipoDia)
+                ? string.Join(',', TipoDiaOrder)
+                : NormalizeTipoDiaCsv(candidate.TipoDia);
+
+            return HasTipoDiaIntersection(existingTipoDia, tipoDiaCsv);
+        });
+
+        if (hasOverlap)
+        {
+            throw new InvalidOperationException("Ya existe una tarifa activa solapada para esa combinación de producto, tipo de cliente, bloque horario y día.");
+        }
+    }
+
+    private async Task<bool> RefreshProductoTarifaAsociadaAsync(long empresaId, long productoEmpresaId, CancellationToken cancellationToken)
+    {
+        var producto = await DbContext.ProductosEmpresa
+            .FirstOrDefaultAsync(x => x.ProductoEmpresaId == productoEmpresaId && x.EmpresaId == empresaId, cancellationToken);
+
+        if (producto is null)
+        {
+            return false;
+        }
+
+        var hasActiveTarifa = await DbContext.TarifasProducto
+            .AsNoTracking()
+            .AnyAsync(x => x.ProductoEmpresaId == productoEmpresaId && x.Activo, cancellationToken);
+
+        var tarifaAsociada = producto.ModoPrecio == "tarifa" && hasActiveTarifa;
+        var shouldDisableForMissingTarifa = producto.ModoPrecio == "tarifa" && !tarifaAsociada;
+
+        var hasChanges = false;
+
+        if (producto.TarifaAsociada != tarifaAsociada)
+        {
+            producto.TarifaAsociada = tarifaAsociada;
+            hasChanges = true;
+        }
+
+        if (shouldDisableForMissingTarifa && producto.Activo)
+        {
+            producto.Activo = false;
+            hasChanges = true;
+        }
+
+        if (shouldDisableForMissingTarifa && producto.VisiblePos)
+        {
+            producto.VisiblePos = false;
+            hasChanges = true;
+        }
+
+        if (hasChanges)
+        {
+            producto.UpdatedAt = DateTimeOffset.UtcNow;
+        }
+
+        return hasChanges;
     }
 
     private static void ValidateClasesConProfesorConfiguration(UpsertProductoRequestDto request)

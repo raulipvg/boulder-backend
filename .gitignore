@@ -91,3 +91,4 @@ npm-debug.log*
 !.vscode/launch.json
 !.vscode/extensions.json
 *.code-workspace
+_build_out/

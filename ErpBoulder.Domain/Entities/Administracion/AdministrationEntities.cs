@@ -154,6 +154,7 @@ public sealed class ProductoEmpresa
     public decimal? PrecioFijo { get; set; }
     public bool VisiblePos { get; set; }
     public bool Activo { get; set; }
+    public bool TarifaAsociada { get; set; }
     public bool RequiereCliente { get; set; }
     public bool GeneraBeneficio { get; set; }
     public long? BloqueHorarioComercialId { get; set; }

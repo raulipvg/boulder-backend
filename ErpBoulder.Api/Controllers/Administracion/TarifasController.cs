@@ -11,9 +11,9 @@ using Microsoft.AspNetCore.Mvc;
 public sealed class TarifasController(IAdministracionService administracionService) : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyCollection<TarifaDto>>> Get(CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyCollection<TarifaDto>>> Get([FromQuery] string? tipoClienteCodigo, CancellationToken cancellationToken)
     {
-        return Ok(await administracionService.GetTarifasAsync(cancellationToken));
+        return Ok(await administracionService.GetTarifasAsync(tipoClienteCodigo, cancellationToken));
     }
 
     [HttpPost]

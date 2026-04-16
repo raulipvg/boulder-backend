@@ -219,6 +219,7 @@ public sealed class ErpBoulderDbContext(DbContextOptions<ErpBoulderDbContext> op
             entity.Property(x => x.PrecioFijo).HasColumnName("precio_fijo");
             entity.Property(x => x.VisiblePos).HasColumnName("visible_pos");
             entity.Property(x => x.Activo).HasColumnName("activo");
+            entity.Property(x => x.TarifaAsociada).HasColumnName("tarifa_asociada");
             entity.Property(x => x.RequiereCliente).HasColumnName("requiere_cliente");
             entity.Property(x => x.GeneraBeneficio).HasColumnName("genera_beneficio");
             entity.Property(x => x.BloqueHorarioComercialId).HasColumnName("bloque_horario_comercial_id");

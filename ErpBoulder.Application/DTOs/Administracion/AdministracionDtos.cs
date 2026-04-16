@@ -26,7 +26,7 @@ public sealed record ClienteDto(long ClienteEmpresaId, long PersonaId, string No
 
 public sealed record UpsertClienteRequestDto(string NombreCompleto, string Rut, DateOnly? FechaNacimiento, string? Telefono, string? Correo, long TipoClienteId, string Estado);
 
-public sealed record ProductoDto(long ProductoEmpresaId, string NombreComercial, string? Descripcion, string TipoProductoBaseCodigo, string ModoPrecio, decimal? PrecioFijo, bool VisiblePos, bool Activo, bool RequiereCliente, bool GeneraBeneficio, long? BloqueHorarioComercialId, long? ClaseId, int? VigenciaDias, int? UsosIncluidos, bool AccesoIlimitado);
+public sealed record ProductoDto(long ProductoEmpresaId, string NombreComercial, string? Descripcion, string TipoProductoBaseCodigo, string ModoPrecio, decimal? PrecioFijo, bool VisiblePos, bool Activo, bool TarifaAsociada, bool RequiereCliente, bool GeneraBeneficio, long? BloqueHorarioComercialId, long? ClaseId, int? VigenciaDias, int? UsosIncluidos, bool AccesoIlimitado);
 
 public sealed record UpsertProductoRequestDto(long TipoProductoBaseId, string NombreComercial, string? Descripcion, string ModoPrecio, decimal? PrecioFijo, bool VisiblePos, bool Activo, bool RequiereCliente, bool GeneraBeneficio, long? BloqueHorarioComercialId, long? ClaseId, int? VigenciaDias, int? UsosIncluidos, bool AccesoIlimitado);
 
