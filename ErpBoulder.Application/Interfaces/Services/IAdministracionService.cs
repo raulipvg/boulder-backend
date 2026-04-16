@@ -26,6 +26,7 @@ public interface IAdministracionService
     Task<IReadOnlyCollection<ProductoDto>> GetProductosAsync(CancellationToken cancellationToken);
     Task<ProductoDto> CreateProductoAsync(UpsertProductoRequestDto request, CancellationToken cancellationToken);
     Task<ProductoDto> UpdateProductoAsync(long productoEmpresaId, UpsertProductoRequestDto request, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<TarifaProductoResumenDto>> GetTarifasByProductoAsync(long productoEmpresaId, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<TarifaDto>> GetTarifasAsync(string? tipoClienteCodigo, CancellationToken cancellationToken);
     Task<TarifaDto> CreateTarifaAsync(UpsertTarifaRequestDto request, CancellationToken cancellationToken);
     Task<TarifaDto> UpdateTarifaAsync(long tarifaProductoId, UpsertTarifaRequestDto request, CancellationToken cancellationToken);

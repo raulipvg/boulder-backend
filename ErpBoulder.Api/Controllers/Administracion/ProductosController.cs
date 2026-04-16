@@ -16,6 +16,12 @@ public sealed class ProductosController(IAdministracionService administracionSer
         return Ok(await administracionService.GetProductosAsync(cancellationToken));
     }
 
+    [HttpGet("{productoEmpresaId:long}/tarifas")]
+    public async Task<ActionResult<IReadOnlyCollection<TarifaProductoResumenDto>>> GetTarifasByProducto(long productoEmpresaId, CancellationToken cancellationToken)
+    {
+        return Ok(await administracionService.GetTarifasByProductoAsync(productoEmpresaId, cancellationToken));
+    }
+
     [HttpPost]
     public async Task<ActionResult<ProductoDto>> Post([FromBody] UpsertProductoRequestDto request, CancellationToken cancellationToken)
     {

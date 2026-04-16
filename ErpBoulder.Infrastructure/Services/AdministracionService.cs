@@ -591,6 +591,63 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<TarifaProductoResumenDto>> GetTarifasByProductoAsync(long productoEmpresaId, CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+
+        var productoExiste = await DbContext.ProductosEmpresa
+            .AsNoTracking()
+            .AnyAsync(x => x.ProductoEmpresaId == productoEmpresaId && x.EmpresaId == empresaId, cancellationToken);
+
+        if (!productoExiste)
+        {
+            return Array.Empty<TarifaProductoResumenDto>();
+        }
+
+        var tarifas = await DbContext.TarifasProducto
+            .AsNoTracking()
+            .Where(x => x.ProductoEmpresaId == productoEmpresaId)
+            .ToListAsync(cancellationToken);
+
+        if (!tarifas.Any())
+        {
+            return Array.Empty<TarifaProductoResumenDto>();
+        }
+
+        var tipoClienteIds = tarifas.Select(t => t.TipoClienteId).Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToList();
+        var bloqueIds = tarifas.Select(t => t.BloqueHorarioComercialId).Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToList();
+
+        var tiposCliente = await DbContext.TiposCliente
+            .AsNoTracking()
+            .Where(t => t.EmpresaId == empresaId && tipoClienteIds.Contains(t.TipoClienteId))
+            .ToDictionaryAsync(t => t.TipoClienteId, cancellationToken);
+
+        var bloques = await DbContext.BloquesHorariosComerciales
+            .AsNoTracking()
+            .Where(b => b.EmpresaId == empresaId && bloqueIds.Contains(b.BloqueHorarioComercialId))
+            .ToDictionaryAsync(b => b.BloqueHorarioComercialId, cancellationToken);
+
+        return tarifas
+            .Select(tarifa => new TarifaProductoResumenDto(
+                tarifa.TarifaProductoId,
+                tarifa.ProductoEmpresaId,
+                tarifa.TipoClienteId,
+                tarifa.TipoClienteId.HasValue && tiposCliente.TryGetValue(tarifa.TipoClienteId.Value, out var tc) ? tc.Nombre : null,
+                tarifa.TipoDia,
+                tarifa.BloqueHorarioComercialId,
+                tarifa.BloqueHorarioComercialId.HasValue && bloques.TryGetValue(tarifa.BloqueHorarioComercialId.Value, out var bl) ? bl.Nombre : null,
+                tarifa.BloqueHorarioComercialId.HasValue && bloques.TryGetValue(tarifa.BloqueHorarioComercialId.Value, out var bl2) ? bl2.HoraInicio.ToString(@"hh\:mm") : null,
+                tarifa.BloqueHorarioComercialId.HasValue && bloques.TryGetValue(tarifa.BloqueHorarioComercialId.Value, out var bl3) ? bl3.HoraFin.ToString(@"hh\:mm") : null,
+                tarifa.Precio,
+                tarifa.VigenciaDesde,
+                tarifa.VigenciaHasta,
+                tarifa.Activo))
+            .OrderByDescending(x => x.Activo)
+            .ThenByDescending(x => x.VigenciaDesde)
+            .ThenBy(x => x.TipoClienteNombre)
+            .ToList();
+    }
+
     public async Task<ProductoDto> CreateProductoAsync(UpsertProductoRequestDto request, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();

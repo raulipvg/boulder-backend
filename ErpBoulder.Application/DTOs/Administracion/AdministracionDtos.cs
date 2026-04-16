@@ -32,6 +32,8 @@ public sealed record UpsertProductoRequestDto(long TipoProductoBaseId, string No
 
 public sealed record TarifaDto(long TarifaProductoId, long ProductoEmpresaId, string ProductoNombre, long? TipoClienteId, string? TipoClienteNombre, string? TipoDia, long? BloqueHorarioComercialId, decimal Precio, DateOnly VigenciaDesde, DateOnly VigenciaHasta, bool Activo);
 
+public sealed record TarifaProductoResumenDto(long TarifaProductoId, long ProductoEmpresaId, long? TipoClienteId, string? TipoClienteNombre, string? TipoDia, long? BloqueHorarioComercialId, string? BloqueHorarioNombre, string? HoraInicio, string? HoraFin, decimal Precio, DateOnly VigenciaDesde, DateOnly VigenciaHasta, bool Activo);
+
 public sealed record UpsertTarifaRequestDto(long ProductoEmpresaId, long? TipoClienteId, string? TipoDia, long? BloqueHorarioComercialId, decimal Precio, DateOnly VigenciaDesde, DateOnly VigenciaHasta, bool Activo);
 
 public sealed record ClaseHorarioDto(long ClaseHorarioId, short DiaSemana, TimeOnly HoraInicio, TimeOnly HoraFin, bool Activo);
