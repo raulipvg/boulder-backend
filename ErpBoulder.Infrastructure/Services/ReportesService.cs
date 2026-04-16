@@ -34,7 +34,7 @@ public sealed class ReportesService : ServiceBase, IReportesService
         }
 
         var mensualidadTipos = await DbContext.TiposProductoBase
-            .Where(x => x.Codigo == ProductBaseCodes.MensualidadPorHorario || x.Codigo == ProductBaseCodes.MensualidadTodoHorario || x.Codigo == ProductBaseCodes.ClasesConProfesor)
+            .Where(x => x.Codigo == ProductBaseCodes.MensualidadPorHorario || x.Codigo == ProductBaseCodes.MensualidadTodoHorario || x.Codigo == ProductBaseCodes.Clases)
             .Select(x => x.TipoProductoBaseId)
             .ToListAsync(cancellationToken);
 

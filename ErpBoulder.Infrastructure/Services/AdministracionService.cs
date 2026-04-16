@@ -687,9 +687,9 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             ValidatePackTicketsConfiguration(normalizedRequest);
         }
 
-        if (tipoProductoBase.Codigo == ProductBaseCodes.ClasesConProfesor)
+        if (tipoProductoBase.Codigo == ProductBaseCodes.Clases)
         {
-            ValidateClasesConProfesorConfiguration(normalizedRequest);
+            ValidateClasesConfiguration(normalizedRequest);
         }
 
         if (tipoProductoBase.Codigo == ProductBaseCodes.TicketIndividual)
@@ -744,6 +744,14 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         var normalizedRequest = NormalizeProductoRequestByType(request, tipoProductoBase.Codigo);
         var tarifaAsociada = normalizedRequest.ModoPrecio == "tarifa" && hasActiveTarifaAsociada;
 
+        if (!normalizedRequest.Activo)
+        {
+            normalizedRequest = normalizedRequest with
+            {
+                VisiblePos = false,
+            };
+        }
+
         if (normalizedRequest.ModoPrecio == "tarifa" && !tarifaAsociada)
         {
             normalizedRequest = normalizedRequest with
@@ -773,9 +781,9 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             ValidatePackTicketsConfiguration(normalizedRequest);
         }
 
-        if (tipoProductoBase.Codigo == ProductBaseCodes.ClasesConProfesor)
+        if (tipoProductoBase.Codigo == ProductBaseCodes.Clases)
         {
-            ValidateClasesConProfesorConfiguration(normalizedRequest);
+            ValidateClasesConfiguration(normalizedRequest);
         }
 
         if (tipoProductoBase.Codigo == ProductBaseCodes.TicketIndividual)
@@ -1078,7 +1086,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             };
         }
 
-        if (tipoCodigo == ProductBaseCodes.ClasesConProfesor)
+        if (tipoCodigo == ProductBaseCodes.Clases)
         {
             return request with
             {
@@ -1219,7 +1227,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         return hasChanges;
     }
 
-    private static void ValidateClasesConProfesorConfiguration(UpsertProductoRequestDto request)
+    private static void ValidateClasesConfiguration(UpsertProductoRequestDto request)
     {
         if (!request.ClaseId.HasValue)
         {

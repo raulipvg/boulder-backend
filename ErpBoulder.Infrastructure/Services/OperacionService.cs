@@ -121,7 +121,7 @@ public sealed class OperacionService : ServiceBase, IOperacionService
             }
         }
 
-        if (autorizado && producto.TipoProductoBase.Codigo == ProductBaseCodes.ClasesConProfesor)
+        if (autorizado && producto.TipoProductoBase.Codigo == ProductBaseCodes.Clases)
         {
             var dayOfWeek = now.DayOfWeek switch
             {
@@ -163,7 +163,7 @@ public sealed class OperacionService : ServiceBase, IOperacionService
 
         DbContext.AccesoEventos.Add(evento);
 
-        if (autorizado && producto.TipoProductoBase.Codigo != ProductBaseCodes.ClasesConProfesor && !beneficio.AccesoIlimitado && beneficio.UsosTotales.HasValue)
+        if (autorizado && producto.TipoProductoBase.Codigo != ProductBaseCodes.Clases && !beneficio.AccesoIlimitado && beneficio.UsosTotales.HasValue)
         {
             beneficio.UsosConsumidos += 1;
             beneficio.UpdatedAt = DateTimeOffset.UtcNow;

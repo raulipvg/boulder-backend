@@ -7,7 +7,7 @@ public static class ProductBaseCodes
     public const string LegacyPack10Tickets = "PACK_10_TICKETS";
     public const string MensualidadPorHorario = "MENSUALIDAD_POR_HORARIO";
     public const string MensualidadTodoHorario = "MENSUALIDAD_TODO_HORARIO";
-    public const string ClasesConProfesor = "CLASES_CON_PROFESOR";
+    public const string Clases = "CLASES";
     public const string ArriendoZapatillas = "ARRIENDO_ZAPATILLAS";
     public const string ProductoCaja = "PRODUCTO_CAJA";
 

@@ -112,7 +112,7 @@ public sealed class VentasService : ServiceBase, IVentasService
             detalles.Add(new VentaPreviewDetalleDto(producto.ProductoEmpresaId, producto.NombreComercial, item.Cantidad, precio, precio * item.Cantidad));
         }
 
-        await ValidateClasesConProfesorRulesAsync(empresaId, request, productos, clientesById, cancellationToken);
+        await ValidateClasesRulesAsync(empresaId, request, productos, clientesById, cancellationToken);
 
         var subtotal = detalles.Sum(x => x.Subtotal);
         return new VentaPreviewDto(subtotal, subtotal, detalles);
@@ -217,7 +217,7 @@ public sealed class VentasService : ServiceBase, IVentasService
             lineItems.Add((detalle, producto, assignedClientId));
         }
 
-        await ValidateClasesConProfesorRulesAsync(empresaId, new PreviewVentaRequestDto(request.ClienteEmpresaId, request.Items), productos, clientesById, cancellationToken);
+        await ValidateClasesRulesAsync(empresaId, new PreviewVentaRequestDto(request.ClienteEmpresaId, request.Items), productos, clientesById, cancellationToken);
 
         venta.Subtotal = venta.Detalles.Sum(x => x.Subtotal);
         venta.Total = venta.Subtotal;
@@ -435,7 +435,7 @@ public sealed class VentasService : ServiceBase, IVentasService
         };
     }
 
-    private async Task ValidateClasesConProfesorRulesAsync(
+    private async Task ValidateClasesRulesAsync(
         long empresaId,
         PreviewVentaRequestDto request,
         IReadOnlyDictionary<long, Domain.Entities.Administracion.ProductoEmpresa> productos,
@@ -449,7 +449,7 @@ public sealed class VentasService : ServiceBase, IVentasService
                 Producto = productos[item.ProductoEmpresaId],
                 ClienteId = ResolveAssignedClientId(item, request.ClienteEmpresaId)
             })
-            .Where(x => x.Producto.TipoProductoBase.Codigo == ProductBaseCodes.ClasesConProfesor)
+            .Where(x => x.Producto.TipoProductoBase.Codigo == ProductBaseCodes.Clases)
             .ToList();
 
         if (classAssignments.Count == 0)
@@ -507,7 +507,7 @@ public sealed class VentasService : ServiceBase, IVentasService
     private static bool RequiresAssignedClient(Domain.Entities.Administracion.ProductoEmpresa producto)
     {
         var tipoCodigo = producto.TipoProductoBase.Codigo;
-        return tipoCodigo is ProductBaseCodes.ClasesConProfesor
+        return tipoCodigo is ProductBaseCodes.Clases
             or ProductBaseCodes.MensualidadPorHorario
             or ProductBaseCodes.MensualidadTodoHorario
             or ProductBaseCodes.TicketIndividual
