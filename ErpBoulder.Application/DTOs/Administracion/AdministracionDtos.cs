@@ -36,6 +36,10 @@ public sealed record TarifaProductoResumenDto(long TarifaProductoId, long Produc
 
 public sealed record UpsertTarifaRequestDto(long ProductoEmpresaId, long? TipoClienteId, string? TipoDia, long? BloqueHorarioComercialId, decimal Precio, DateOnly VigenciaDesde, DateOnly VigenciaHasta, bool Activo);
 
+public sealed record CreateTarifaBatchItemRequestDto(long TipoClienteId, string? TipoDia, long? BloqueHorarioComercialId, decimal Precio, DateOnly VigenciaDesde, DateOnly VigenciaHasta, bool Activo);
+
+public sealed record CreateTarifasBatchRequestDto(long ProductoEmpresaId, IReadOnlyCollection<CreateTarifaBatchItemRequestDto> Tarifas);
+
 public sealed record ClaseHorarioDto(long ClaseHorarioId, short DiaSemana, TimeOnly HoraInicio, TimeOnly HoraFin, bool Activo);
 
 public sealed record ClaseDto(long ClaseId, string Nombre, long ProfesorEmpresaId, string ProfesorNombre, int CupoMaximo, string Estado, IReadOnlyCollection<ClaseHorarioDto> Horarios);

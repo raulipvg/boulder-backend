@@ -871,6 +871,11 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         var empresaId = GetRequiredEmpresaId();
         var tipoDiaNormalizado = NormalizeTipoDiaCsv(request.TipoDia);
 
+        if (!request.TipoClienteId.HasValue)
+        {
+            throw new InvalidOperationException("Tipo de cliente es obligatorio.");
+        }
+
         var producto = await DbContext.ProductosEmpresa.FirstAsync(x => x.ProductoEmpresaId == request.ProductoEmpresaId && x.EmpresaId == empresaId, cancellationToken);
         if (producto.ModoPrecio != "tarifa")
         {
@@ -921,10 +926,143 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         return new TarifaDto(entity.TarifaProductoId, entity.ProductoEmpresaId, producto.NombreComercial, entity.TipoClienteId, tipoClienteNombre, entity.TipoDia, entity.BloqueHorarioComercialId, entity.Precio, entity.VigenciaDesde, entity.VigenciaHasta, entity.Activo);
     }
 
+    public async Task<IReadOnlyCollection<TarifaDto>> CreateTarifasBatchAsync(CreateTarifasBatchRequestDto request, CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+
+        if (request.Tarifas is null || request.Tarifas.Count == 0)
+        {
+            throw new InvalidOperationException("Debes agregar al menos una tarifa.");
+        }
+
+        var producto = await DbContext.ProductosEmpresa
+            .FirstAsync(x => x.ProductoEmpresaId == request.ProductoEmpresaId && x.EmpresaId == empresaId, cancellationToken);
+
+        if (producto.ModoPrecio != "tarifa")
+        {
+            throw new InvalidOperationException("Solo se pueden asociar tarifas a productos con modo de precio 'tarifa'.");
+        }
+
+        var batchActiveEntries = new List<(int Linea, long TipoClienteId, long? BloqueHorarioComercialId, string TipoDiaCsv, DateOnly VigenciaDesde, DateOnly VigenciaHasta)>();
+        var entities = new List<TarifaProducto>();
+
+        await using var tx = await DbContext.Database.BeginTransactionAsync(cancellationToken);
+
+        for (var index = 0; index < request.Tarifas.Count; index++)
+        {
+            var linea = request.Tarifas.ElementAt(index);
+            var lineNumber = index + 1;
+
+            if (linea.TipoClienteId <= 0)
+            {
+                throw new InvalidOperationException($"Línea {lineNumber}: Tipo de cliente es obligatorio.");
+            }
+
+            if (linea.Precio <= 0)
+            {
+                throw new InvalidOperationException($"Línea {lineNumber}: El precio debe ser mayor a 0.");
+            }
+
+            if (linea.VigenciaHasta < linea.VigenciaDesde)
+            {
+                throw new InvalidOperationException($"Línea {lineNumber}: La vigencia hasta no puede ser anterior a la vigencia desde.");
+            }
+
+            if (linea.BloqueHorarioComercialId.HasValue)
+            {
+                await EnsureActiveBloqueHorarioAsync(empresaId, linea.BloqueHorarioComercialId.Value, cancellationToken);
+            }
+
+            var tipoDiaNormalizado = NormalizeTipoDiaCsv(linea.TipoDia);
+
+            if (linea.Activo)
+            {
+                await ValidateActiveTarifaOverlapAsync(
+                    request.ProductoEmpresaId,
+                    linea.TipoClienteId,
+                    linea.BloqueHorarioComercialId,
+                    tipoDiaNormalizado,
+                    linea.VigenciaDesde,
+                    linea.VigenciaHasta,
+                    null,
+                    cancellationToken);
+
+                var hasOverlapInBatch = batchActiveEntries.Any(existing =>
+                    existing.TipoClienteId == linea.TipoClienteId
+                    && existing.BloqueHorarioComercialId == linea.BloqueHorarioComercialId
+                    && existing.VigenciaDesde <= linea.VigenciaHasta
+                    && linea.VigenciaDesde <= existing.VigenciaHasta
+                    && HasTipoDiaIntersection(existing.TipoDiaCsv, tipoDiaNormalizado));
+
+                if (hasOverlapInBatch)
+                {
+                    throw new InvalidOperationException($"Línea {lineNumber}: Ya existe otra tarifa activa solapada en el lote para la misma combinación de tipo de cliente, bloque, días y vigencia.");
+                }
+
+                batchActiveEntries.Add((lineNumber, linea.TipoClienteId, linea.BloqueHorarioComercialId, tipoDiaNormalizado, linea.VigenciaDesde, linea.VigenciaHasta));
+            }
+
+            var entity = new TarifaProducto
+            {
+                ProductoEmpresaId = request.ProductoEmpresaId,
+                TipoClienteId = linea.TipoClienteId,
+                TipoDia = tipoDiaNormalizado,
+                BloqueHorarioComercialId = linea.BloqueHorarioComercialId,
+                Precio = linea.Precio,
+                VigenciaDesde = linea.VigenciaDesde,
+                VigenciaHasta = linea.VigenciaHasta,
+                Activo = linea.Activo,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+
+            entities.Add(entity);
+            DbContext.TarifasProducto.Add(entity);
+        }
+
+        await DbContext.SaveChangesAsync(cancellationToken);
+
+        var productoActualizado = await RefreshProductoTarifaAsociadaAsync(empresaId, request.ProductoEmpresaId, cancellationToken);
+        if (productoActualizado)
+        {
+            await DbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        foreach (var entity in entities)
+        {
+            await AuditAsync("tarifa_producto", entity.TarifaProductoId, "crear", request, empresaId, cancellationToken);
+        }
+
+        await tx.CommitAsync(cancellationToken);
+
+        var tipoClienteIds = entities.Select(x => x.TipoClienteId).Where(id => id.HasValue).Select(id => id!.Value).Distinct().ToList();
+        var tiposCliente = await DbContext.TiposCliente
+            .AsNoTracking()
+            .Where(x => tipoClienteIds.Contains(x.TipoClienteId))
+            .ToDictionaryAsync(x => x.TipoClienteId, cancellationToken);
+
+        return entities.Select(entity => new TarifaDto(
+            entity.TarifaProductoId,
+            entity.ProductoEmpresaId,
+            producto.NombreComercial,
+            entity.TipoClienteId,
+            entity.TipoClienteId.HasValue && tiposCliente.TryGetValue(entity.TipoClienteId.Value, out var tipoCliente) ? tipoCliente.Nombre : null,
+            entity.TipoDia,
+            entity.BloqueHorarioComercialId,
+            entity.Precio,
+            entity.VigenciaDesde,
+            entity.VigenciaHasta,
+            entity.Activo)).ToList();
+    }
+
     public async Task<TarifaDto> UpdateTarifaAsync(long tarifaProductoId, UpsertTarifaRequestDto request, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
         var tipoDiaNormalizado = NormalizeTipoDiaCsv(request.TipoDia);
+
+        if (!request.TipoClienteId.HasValue)
+        {
+            throw new InvalidOperationException("Tipo de cliente es obligatorio.");
+        }
 
         var producto = await DbContext.ProductosEmpresa.FirstAsync(x => x.ProductoEmpresaId == request.ProductoEmpresaId && x.EmpresaId == empresaId, cancellationToken);
         if (producto.ModoPrecio != "tarifa")

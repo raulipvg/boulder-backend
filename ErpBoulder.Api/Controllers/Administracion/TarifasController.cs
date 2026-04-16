@@ -22,6 +22,12 @@ public sealed class TarifasController(IAdministracionService administracionServi
         return Ok(await administracionService.CreateTarifaAsync(request, cancellationToken));
     }
 
+    [HttpPost("batch")]
+    public async Task<ActionResult<IReadOnlyCollection<TarifaDto>>> PostBatch([FromBody] CreateTarifasBatchRequestDto request, CancellationToken cancellationToken)
+    {
+        return Ok(await administracionService.CreateTarifasBatchAsync(request, cancellationToken));
+    }
+
     [HttpPut("{tarifaProductoId:long}")]
     public async Task<ActionResult<TarifaDto>> Put(long tarifaProductoId, [FromBody] UpsertTarifaRequestDto request, CancellationToken cancellationToken)
     {
