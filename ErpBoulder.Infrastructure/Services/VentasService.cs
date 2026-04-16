@@ -491,11 +491,12 @@ public sealed class VentasService : ServiceBase, IVentasService
 
     private static bool RequiresAssignedClient(Domain.Entities.Administracion.ProductoEmpresa producto)
     {
-        return producto.TipoProductoBase.Codigo is ProductBaseCodes.ClasesConProfesor
+        var tipoCodigo = producto.TipoProductoBase.Codigo;
+        return tipoCodigo is ProductBaseCodes.ClasesConProfesor
             or ProductBaseCodes.MensualidadPorHorario
             or ProductBaseCodes.MensualidadTodoHorario
-            or ProductBaseCodes.Pack10Tickets
-            or ProductBaseCodes.TicketIndividual;
+            or ProductBaseCodes.TicketIndividual
+            || ProductBaseCodes.IsPackTickets(tipoCodigo);
     }
 
     private static bool IsSingleUnitAssignedProduct(Domain.Entities.Administracion.ProductoEmpresa producto) => RequiresAssignedClient(producto);

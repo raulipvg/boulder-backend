@@ -38,7 +38,10 @@ public sealed class ReportesService : ServiceBase, IReportesService
             .Select(x => x.TipoProductoBaseId)
             .ToListAsync(cancellationToken);
 
-        var packTipoId = await DbContext.TiposProductoBase.Where(x => x.Codigo == ProductBaseCodes.Pack10Tickets).Select(x => (long?)x.TipoProductoBaseId).FirstOrDefaultAsync(cancellationToken);
+        var packTipoId = await DbContext.TiposProductoBase
+            .Where(x => x.Codigo == ProductBaseCodes.PackTickets || x.Codigo == ProductBaseCodes.LegacyPack10Tickets)
+            .Select(x => (long?)x.TipoProductoBaseId)
+            .FirstOrDefaultAsync(cancellationToken);
 
         return new DashboardReportDto(
             await ventasQuery.SumAsync(x => (decimal?)x.Total, cancellationToken) ?? 0m,

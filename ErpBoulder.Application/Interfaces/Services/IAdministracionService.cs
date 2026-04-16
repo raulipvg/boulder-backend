@@ -7,6 +7,9 @@ public interface IAdministracionService
     Task<IReadOnlyCollection<LookupDto>> GetTiposProductoBaseAsync(CancellationToken cancellationToken);
     Task<IReadOnlyCollection<LookupDto>> GetMediosPagoAsync(CancellationToken cancellationToken);
     Task<IReadOnlyCollection<LookupDto>> GetBloquesHorariosAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<BloqueHorarioDto>> GetBloquesHorariosComercialesAsync(CancellationToken cancellationToken);
+    Task<BloqueHorarioDto> CreateBloqueHorarioAsync(UpsertBloqueHorarioRequestDto request, CancellationToken cancellationToken);
+    Task<BloqueHorarioDto> UpdateBloqueHorarioAsync(long bloqueHorarioComercialId, UpsertBloqueHorarioRequestDto request, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<LookupDto>> GetProfesoresAsync(CancellationToken cancellationToken);
     Task<IReadOnlyCollection<EmpresaDto>> GetEmpresasAsync(CancellationToken cancellationToken);
     Task<EmpresaDto> CreateEmpresaAsync(CreateEmpresaRequestDto request, CancellationToken cancellationToken);

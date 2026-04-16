@@ -55,12 +55,89 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
 
         return await DbContext.BloquesHorariosComerciales.AsNoTracking()
             .Where(x => x.EmpresaId == empresaId && x.Activo)
-            .OrderBy(x => x.Nombre)
+            .OrderBy(x => x.HoraInicio)
             .Select(x => new LookupDto(
                 x.BloqueHorarioComercialId,
                 x.Nombre,
                 $"{x.Nombre} ({x.HoraInicio:HH\\:mm}-{x.HoraFin:HH\\:mm})"))
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyCollection<BloqueHorarioDto>> GetBloquesHorariosComercialesAsync(CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+
+        return await DbContext.BloquesHorariosComerciales.AsNoTracking()
+            .Where(x => x.EmpresaId == empresaId)
+            .OrderBy(x => x.HoraInicio)
+            .Select(x => new BloqueHorarioDto(x.BloqueHorarioComercialId, x.Nombre, x.HoraInicio, x.HoraFin, x.Activo))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<BloqueHorarioDto> CreateBloqueHorarioAsync(UpsertBloqueHorarioRequestDto request, CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+
+        if (request.HoraInicio >= request.HoraFin)
+            throw new InvalidOperationException("La hora de inicio debe ser anterior a la hora de fin.");
+
+        if (request.Activo)
+            await ValidateBloqueHorarioOverlapAsync(empresaId, request.HoraInicio, request.HoraFin, null, cancellationToken);
+
+        var entity = new BloqueHorarioComercial
+        {
+            EmpresaId = empresaId,
+            Nombre = request.Nombre.Trim(),
+            HoraInicio = request.HoraInicio,
+            HoraFin = request.HoraFin,
+            Activo = request.Activo
+        };
+
+        DbContext.BloquesHorariosComerciales.Add(entity);
+        await DbContext.SaveChangesAsync(cancellationToken);
+        await AuditAsync("bloque_horario_comercial", entity.BloqueHorarioComercialId, "crear", request, empresaId, cancellationToken);
+
+        return new BloqueHorarioDto(entity.BloqueHorarioComercialId, entity.Nombre, entity.HoraInicio, entity.HoraFin, entity.Activo);
+    }
+
+    public async Task<BloqueHorarioDto> UpdateBloqueHorarioAsync(long bloqueHorarioComercialId, UpsertBloqueHorarioRequestDto request, CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+
+        if (request.HoraInicio >= request.HoraFin)
+            throw new InvalidOperationException("La hora de inicio debe ser anterior a la hora de fin.");
+
+        var entity = await DbContext.BloquesHorariosComerciales
+            .FirstAsync(x => x.BloqueHorarioComercialId == bloqueHorarioComercialId && x.EmpresaId == empresaId, cancellationToken);
+
+        if (request.Activo)
+            await ValidateBloqueHorarioOverlapAsync(empresaId, request.HoraInicio, request.HoraFin, bloqueHorarioComercialId, cancellationToken);
+
+        entity.Nombre = request.Nombre.Trim();
+        entity.HoraInicio = request.HoraInicio;
+        entity.HoraFin = request.HoraFin;
+        entity.Activo = request.Activo;
+
+        await DbContext.SaveChangesAsync(cancellationToken);
+        await AuditAsync("bloque_horario_comercial", entity.BloqueHorarioComercialId, "actualizar", request, empresaId, cancellationToken);
+
+        return new BloqueHorarioDto(entity.BloqueHorarioComercialId, entity.Nombre, entity.HoraInicio, entity.HoraFin, entity.Activo);
+    }
+
+    private async Task ValidateBloqueHorarioOverlapAsync(long empresaId, TimeOnly horaInicio, TimeOnly horaFin, long? excludeId, CancellationToken cancellationToken)
+    {
+        var query = DbContext.BloquesHorariosComerciales.AsNoTracking()
+            .Where(x => x.EmpresaId == empresaId && x.Activo && horaInicio < x.HoraFin && x.HoraInicio < horaFin);
+
+        if (excludeId.HasValue)
+            query = query.Where(x => x.BloqueHorarioComercialId != excludeId.Value);
+
+        var overlap = await query
+            .Select(x => new { x.Nombre, x.HoraInicio, x.HoraFin })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (overlap is not null)
+            throw new InvalidOperationException($"El horario se solapa con el bloque activo '{overlap.Nombre}' ({overlap.HoraInicio:HH\\:mm}-{overlap.HoraFin:HH\\:mm}).");
     }
 
     public async Task<IReadOnlyCollection<LookupDto>> GetProfesoresAsync(CancellationToken cancellationToken)
@@ -537,6 +614,11 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             }
         }
 
+        if (ProductBaseCodes.IsPackTickets(tipoProductoBase.Codigo))
+        {
+            ValidatePackTicketsConfiguration(normalizedRequest);
+        }
+
         var entity = new ProductoEmpresa
         {
             EmpresaId = empresaId,
@@ -588,6 +670,11 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             {
                 await ValidateMensualidadPorHorarioOverlapAsync(empresaId, normalizedRequest.BloqueHorarioComercialId.Value, productoEmpresaId, cancellationToken);
             }
+        }
+
+        if (ProductBaseCodes.IsPackTickets(tipoProductoBase.Codigo))
+        {
+            ValidatePackTicketsConfiguration(normalizedRequest);
         }
 
         var entity = await DbContext.ProductosEmpresa
@@ -816,23 +903,49 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
 
     private static UpsertProductoRequestDto NormalizeProductoRequestByType(UpsertProductoRequestDto request, string tipoCodigo)
     {
-        if (tipoCodigo is not ProductBaseCodes.MensualidadPorHorario and not ProductBaseCodes.MensualidadTodoHorario)
+        if (tipoCodigo is ProductBaseCodes.MensualidadPorHorario or ProductBaseCodes.MensualidadTodoHorario)
         {
-            return request;
+            return request with
+            {
+                ModoPrecio = "tarifa",
+                PrecioFijo = null,
+                RequiereCliente = true,
+                GeneraBeneficio = true,
+                BloqueHorarioComercialId = tipoCodigo == ProductBaseCodes.MensualidadPorHorario ? request.BloqueHorarioComercialId : null,
+                ClaseId = null,
+                VigenciaDias = 30,
+                UsosIncluidos = null,
+                AccesoIlimitado = true,
+            };
         }
 
-        return request with
+        if (ProductBaseCodes.IsPackTickets(tipoCodigo))
         {
-            ModoPrecio = "tarifa",
-            PrecioFijo = null,
-            RequiereCliente = true,
-            GeneraBeneficio = true,
-            BloqueHorarioComercialId = tipoCodigo == ProductBaseCodes.MensualidadPorHorario ? request.BloqueHorarioComercialId : null,
-            ClaseId = null,
-            VigenciaDias = 30,
-            UsosIncluidos = null,
-            AccesoIlimitado = true,
-        };
+            return request with
+            {
+                ModoPrecio = "tarifa",
+                PrecioFijo = null,
+                RequiereCliente = true,
+                GeneraBeneficio = true,
+                ClaseId = null,
+                AccesoIlimitado = false,
+            };
+        }
+
+        return request;
+    }
+
+    private static void ValidatePackTicketsConfiguration(UpsertProductoRequestDto request)
+    {
+        if (!request.UsosIncluidos.HasValue || request.UsosIncluidos.Value <= 0)
+        {
+            throw new InvalidOperationException("El pack de tickets debe definir una cantidad de tickets mayor a 0.");
+        }
+
+        if (!request.VigenciaDias.HasValue || request.VigenciaDias.Value <= 0)
+        {
+            throw new InvalidOperationException("El pack de tickets debe definir vigencia en días mayor a 0.");
+        }
     }
 
     private async Task EnsureActiveBloqueHorarioAsync(long empresaId, long bloqueHorarioComercialId, CancellationToken cancellationToken)

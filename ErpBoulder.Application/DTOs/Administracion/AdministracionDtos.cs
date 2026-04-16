@@ -2,6 +2,10 @@ namespace ErpBoulder.Application.DTOs.Administracion;
 
 public sealed record LookupDto(long Id, string Codigo, string Nombre);
 
+public sealed record BloqueHorarioDto(long BloqueHorarioComercialId, string Nombre, TimeOnly HoraInicio, TimeOnly HoraFin, bool Activo);
+
+public sealed record UpsertBloqueHorarioRequestDto(string Nombre, TimeOnly HoraInicio, TimeOnly HoraFin, bool Activo);
+
 public sealed record EmpresaDto(long EmpresaId, string NombreComercial, string? RazonSocial, string Rut, string Estado, string MonedaCodigo, string? TelefonoContacto, string? CorreoContacto);
 
 public sealed record CreateEmpresaRequestDto(string NombreComercial, string? RazonSocial, string Rut, string? TelefonoContacto, string? CorreoContacto);
