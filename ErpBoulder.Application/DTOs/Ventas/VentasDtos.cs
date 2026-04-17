@@ -1,6 +1,17 @@
 namespace ErpBoulder.Application.DTOs.Ventas;
 
-public sealed record PosCatalogItemDto(long ProductoEmpresaId, string NombreComercial, string TipoProductoBaseCodigo, string ModoPrecio, decimal? PrecioFijo, bool RequiereCliente, bool GeneraBeneficio, bool VisiblePos);
+public sealed record PosCatalogItemDto(
+    long ProductoEmpresaId,
+    string NombreComercial,
+    string TipoProductoBaseCodigo,
+    string ModoPrecio,
+    decimal? PrecioFijo,
+    bool RequiereCliente,
+    bool GeneraBeneficio,
+    bool VisiblePos,
+    decimal? TarifaGeneralVigente,
+    decimal? TarifaEstudianteVigente,
+    IReadOnlyCollection<string> DiasClase);
 
 public sealed record VentaItemRequestDto(long ProductoEmpresaId, int Cantidad, long? ClienteEmpresaIdAsignado, DateOnly? FechaInicioVigencia, string? Observacion);
 

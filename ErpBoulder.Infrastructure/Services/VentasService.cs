@@ -19,21 +19,140 @@ public sealed class VentasService : ServiceBase, IVentasService
     {
         var empresaId = GetRequiredEmpresaId();
 
-        return await DbContext.ProductosEmpresa
+        var productos = await DbContext.ProductosEmpresa
             .AsNoTracking()
             .Include(x => x.TipoProductoBase)
             .Where(x => x.EmpresaId == empresaId && x.Activo && x.VisiblePos && (x.ModoPrecio != "tarifa" || x.TarifaAsociada))
             .OrderBy(x => x.NombreComercial)
-            .Select(x => new PosCatalogItemDto(
+            .Select(x => new
+            {
                 x.ProductoEmpresaId,
                 x.NombreComercial,
-                x.TipoProductoBase.Codigo,
+                TipoProductoBaseCodigo = x.TipoProductoBase.Codigo,
                 x.ModoPrecio,
                 x.PrecioFijo,
                 x.RequiereCliente,
                 x.GeneraBeneficio,
-                x.VisiblePos))
+                x.VisiblePos,
+                x.ClaseId,
+            })
             .ToListAsync(cancellationToken);
+
+        var classProductIds = productos
+            .Where(x => x.TipoProductoBaseCodigo == ProductBaseCodes.Clases)
+            .Select(x => x.ProductoEmpresaId)
+            .ToArray();
+
+        var classIds = productos
+            .Where(x => x.TipoProductoBaseCodigo == ProductBaseCodes.Clases && x.ClaseId.HasValue)
+            .Select(x => x.ClaseId!.Value)
+            .Distinct()
+            .ToArray();
+
+        var classDaysByClaseId = new Dictionary<long, IReadOnlyCollection<string>>();
+
+        if (classIds.Length > 0)
+        {
+            var classScheduleRows = await DbContext.ClaseHorarios
+                .AsNoTracking()
+                .Where(x => classIds.Contains(x.ClaseId) && x.Activo)
+                .Select(x => new { x.ClaseId, x.DiaSemana })
+                .ToListAsync(cancellationToken);
+
+            classDaysByClaseId = classScheduleRows
+                .GroupBy(x => x.ClaseId)
+                .ToDictionary(
+                    group => group.Key,
+                    group => (IReadOnlyCollection<string>)group
+                        .OrderBy(x => x.DiaSemana)
+                        .Select(x => ToDayCode(x.DiaSemana))
+                        .Distinct()
+                        .ToArray());
+        }
+
+        var classTarifasByProduct = new Dictionary<long, (decimal? General, decimal? Estudiante)>();
+
+        if (classProductIds.Length > 0)
+        {
+            var now = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(-4));
+            var today = DateOnly.FromDateTime(now.Date);
+
+            var tarifasCandidatas = await (
+                from tarifa in DbContext.TarifasProducto.AsNoTracking()
+                join tipoCliente in DbContext.TiposCliente.AsNoTracking() on tarifa.TipoClienteId equals tipoCliente.TipoClienteId
+                where classProductIds.Contains(tarifa.ProductoEmpresaId)
+                    && tarifa.Activo
+                    && tarifa.VigenciaDesde <= today
+                    && today <= tarifa.VigenciaHasta
+                    && (tipoCliente.Codigo == "GENERAL" || tipoCliente.Codigo == "ESTUDIANTE")
+                select new
+                {
+                    tarifa.ProductoEmpresaId,
+                    TipoClienteCodigo = tipoCliente.Codigo,
+                    tarifa.Precio,
+                    tarifa.VigenciaDesde,
+                })
+                .ToListAsync(cancellationToken);
+
+            classTarifasByProduct = tarifasCandidatas
+                .GroupBy(x => x.ProductoEmpresaId)
+                .ToDictionary(
+                    group => group.Key,
+                    group =>
+                    {
+                        var general = group
+                            .Where(x => x.TipoClienteCodigo == "GENERAL")
+                            .OrderByDescending(x => x.VigenciaDesde)
+                            .Select(x => (decimal?)x.Precio)
+                            .FirstOrDefault();
+
+                        var estudiante = group
+                            .Where(x => x.TipoClienteCodigo == "ESTUDIANTE")
+                            .OrderByDescending(x => x.VigenciaDesde)
+                            .Select(x => (decimal?)x.Precio)
+                            .FirstOrDefault();
+
+                        return (general, estudiante);
+                    });
+        }
+
+        return productos
+            .Select(x =>
+            {
+                var tarifas = classTarifasByProduct.GetValueOrDefault(x.ProductoEmpresaId);
+                var diasClase = x.ClaseId.HasValue && classDaysByClaseId.TryGetValue(x.ClaseId.Value, out var days)
+                    ? days
+                    : Array.Empty<string>();
+
+                return new PosCatalogItemDto(
+                x.ProductoEmpresaId,
+                x.NombreComercial,
+                x.TipoProductoBaseCodigo,
+                x.ModoPrecio,
+                x.PrecioFijo,
+                x.RequiereCliente,
+                x.GeneraBeneficio,
+                x.VisiblePos,
+                tarifas.General,
+                tarifas.Estudiante,
+                diasClase);
+            })
+            .ToList();
+    }
+
+    private static string ToDayCode(short diaSemana)
+    {
+        return diaSemana switch
+        {
+            1 => "LUN",
+            2 => "MAR",
+            3 => "MIE",
+            4 => "JUE",
+            5 => "VIE",
+            6 => "SAB",
+            7 => "DOM",
+            _ => $"D{diaSemana}",
+        };
     }
 
     public async Task<VentaPreviewDto> PreviewVentaAsync(PreviewVentaRequestDto request, CancellationToken cancellationToken)
