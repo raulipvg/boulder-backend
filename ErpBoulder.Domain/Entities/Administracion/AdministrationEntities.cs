@@ -104,7 +104,7 @@ public sealed class Clase
     public string Nombre { get; set; } = string.Empty;
     public long ProfesorEmpresaId { get; set; }
     public int CupoMaximo { get; set; }
-    public string Estado { get; set; } = "activa";
+    public bool Activo { get; set; } = true;
 
     public ProfesorEmpresa ProfesorEmpresa { get; set; } = null!;
     public ICollection<ClaseHorario> Horarios { get; set; } = new List<ClaseHorario>();

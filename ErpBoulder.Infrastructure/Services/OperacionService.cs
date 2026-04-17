@@ -273,7 +273,7 @@ public sealed class OperacionService : ServiceBase, IOperacionService
 
         var clases = await DbContext.Clases
             .Include(x => x.Horarios)
-            .Where(x => x.EmpresaId == empresaId && x.Estado == "activa")
+            .Where(x => x.EmpresaId == empresaId && x.Activo)
             .ToListAsync(cancellationToken);
 
         var existing = await DbContext.ClaseSesiones

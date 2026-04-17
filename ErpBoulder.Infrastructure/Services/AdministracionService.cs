@@ -1118,11 +1118,10 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         return new TarifaDto(entity.TarifaProductoId, entity.ProductoEmpresaId, producto.NombreComercial, entity.TipoClienteId, tipoClienteNombre, entity.TipoDia, entity.BloqueHorarioComercialId, entity.Precio, entity.VigenciaDesde, entity.VigenciaHasta, entity.Activo);
     }
 
-    public async Task<IReadOnlyCollection<ClaseDto>> GetClasesAsync(string? estado, CancellationToken cancellationToken)
+    public async Task<IReadOnlyCollection<ClaseDto>> GetClasesAsync(bool? activo, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
-        var estadoFiltro = NormalizeClaseEstado(estado);
-        var horarioActivoFiltro = estadoFiltro == "activa";
+        var horarioActivoFiltro = activo;
 
         var query = DbContext.Clases
             .AsNoTracking()
@@ -1130,9 +1129,10 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             .Include(x => x.Horarios)
             .Where(x => x.EmpresaId == empresaId);
 
-        if (estadoFiltro is not null)
+        if (activo.HasValue)
         {
-            query = query.Where(x => x.Estado == estadoFiltro && x.Horarios.Any(h => h.Activo == horarioActivoFiltro));
+            var horarioActivoFiltroValue = activo.Value;
+            query = query.Where(x => x.Activo == activo.Value && x.Horarios.Any(h => h.Activo == horarioActivoFiltroValue));
         }
 
         return await query
@@ -1143,9 +1143,9 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
                 x.ProfesorEmpresaId,
                 x.ProfesorEmpresa.Persona.NombreCompleto,
                 x.CupoMaximo,
-                x.Estado,
+                x.Activo,
                 x.Horarios
-                    .Where(h => estadoFiltro == null || h.Activo == horarioActivoFiltro)
+                    .Where(h => !horarioActivoFiltro.HasValue || h.Activo == horarioActivoFiltro.Value)
                     .OrderBy(h => h.DiaSemana)
                     .ThenBy(h => h.HoraInicio)
                     .Select(h => new ClaseHorarioDto(h.ClaseHorarioId, h.DiaSemana, h.HoraInicio, h.HoraFin, h.Activo))
@@ -1168,7 +1168,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
                 x.ProfesorEmpresaId,
                 x.ProfesorEmpresa.Persona.NombreCompleto,
                 x.CupoMaximo,
-                x.Estado,
+                x.Activo,
                 x.Horarios
                     .OrderBy(h => h.DiaSemana)
                     .ThenBy(h => h.HoraInicio)
@@ -1177,35 +1177,30 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             .FirstAsync(cancellationToken);
     }
 
-    private static string? NormalizeClaseEstado(string? estado)
-    {
-        var normalized = (estado ?? string.Empty).Trim().ToLowerInvariant();
-        return normalized switch
-        {
-            "" => null,
-            "inactiva" => "inactiva",
-            "activa" => "activa",
-            _ => null
-        };
-    }
-
     public async Task<ClaseDto> CreateClaseAsync(UpsertClaseRequestDto request, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
+        var normalizedRequest = request with
+        {
+            Horarios = (request.Horarios ?? Array.Empty<ClaseHorarioRequestDto>())
+                .Select(h => h with { Activo = request.Activo })
+                .ToArray()
+        };
+
         var profesor = await DbContext.ProfesoresEmpresa
             .Include(x => x.Persona)
-            .FirstAsync(x => x.ProfesorEmpresaId == request.ProfesorEmpresaId && x.EmpresaId == empresaId, cancellationToken);
+            .FirstAsync(x => x.ProfesorEmpresaId == normalizedRequest.ProfesorEmpresaId && x.EmpresaId == empresaId, cancellationToken);
 
-        await ValidateClaseHorariosAsync(empresaId, request.ProfesorEmpresaId, request.Estado, request.Horarios, null, cancellationToken);
+        await ValidateClaseHorariosAsync(empresaId, normalizedRequest.ProfesorEmpresaId, normalizedRequest.Activo, normalizedRequest.Horarios, null, cancellationToken);
 
         var entity = new Clase
         {
             EmpresaId = empresaId,
-            Nombre = request.Nombre,
-            ProfesorEmpresaId = request.ProfesorEmpresaId,
-            CupoMaximo = request.CupoMaximo,
-            Estado = request.Estado,
-            Horarios = request.Horarios.Select(h => new ClaseHorario
+            Nombre = normalizedRequest.Nombre,
+            ProfesorEmpresaId = normalizedRequest.ProfesorEmpresaId,
+            CupoMaximo = normalizedRequest.CupoMaximo,
+            Activo = normalizedRequest.Activo,
+            Horarios = normalizedRequest.Horarios.Select(h => new ClaseHorario
             {
                 DiaSemana = h.DiaSemana,
                 HoraInicio = h.HoraInicio,
@@ -1216,31 +1211,38 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
 
         DbContext.Clases.Add(entity);
         await DbContext.SaveChangesAsync(cancellationToken);
-        await AuditAsync("clase", entity.ClaseId, "crear", request, empresaId, cancellationToken);
+        await AuditAsync("clase", entity.ClaseId, "crear", normalizedRequest, empresaId, cancellationToken);
 
-        return new ClaseDto(entity.ClaseId, entity.Nombre, entity.ProfesorEmpresaId, profesor.Persona.NombreCompleto, entity.CupoMaximo, entity.Estado, entity.Horarios.Select(h => new ClaseHorarioDto(h.ClaseHorarioId, h.DiaSemana, h.HoraInicio, h.HoraFin, h.Activo)).ToArray());
+        return new ClaseDto(entity.ClaseId, entity.Nombre, entity.ProfesorEmpresaId, profesor.Persona.NombreCompleto, entity.CupoMaximo, entity.Activo, entity.Horarios.Select(h => new ClaseHorarioDto(h.ClaseHorarioId, h.DiaSemana, h.HoraInicio, h.HoraFin, h.Activo)).ToArray());
     }
 
     public async Task<ClaseDto> UpdateClaseAsync(long claseId, UpsertClaseRequestDto request, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
+        var normalizedRequest = request with
+        {
+            Horarios = (request.Horarios ?? Array.Empty<ClaseHorarioRequestDto>())
+                .Select(h => h with { Activo = request.Activo })
+                .ToArray()
+        };
+
         var profesor = await DbContext.ProfesoresEmpresa
             .Include(x => x.Persona)
-            .FirstAsync(x => x.ProfesorEmpresaId == request.ProfesorEmpresaId && x.EmpresaId == empresaId, cancellationToken);
+            .FirstAsync(x => x.ProfesorEmpresaId == normalizedRequest.ProfesorEmpresaId && x.EmpresaId == empresaId, cancellationToken);
 
-        await ValidateClaseHorariosAsync(empresaId, request.ProfesorEmpresaId, request.Estado, request.Horarios, claseId, cancellationToken);
+        await ValidateClaseHorariosAsync(empresaId, normalizedRequest.ProfesorEmpresaId, normalizedRequest.Activo, normalizedRequest.Horarios, claseId, cancellationToken);
 
         var entity = await DbContext.Clases
             .Include(x => x.Horarios)
             .FirstAsync(x => x.ClaseId == claseId && x.EmpresaId == empresaId, cancellationToken);
 
-        entity.Nombre = request.Nombre;
-        entity.ProfesorEmpresaId = request.ProfesorEmpresaId;
-        entity.CupoMaximo = request.CupoMaximo;
-        entity.Estado = request.Estado;
+        entity.Nombre = normalizedRequest.Nombre;
+        entity.ProfesorEmpresaId = normalizedRequest.ProfesorEmpresaId;
+        entity.CupoMaximo = normalizedRequest.CupoMaximo;
+        entity.Activo = normalizedRequest.Activo;
 
         DbContext.ClaseHorarios.RemoveRange(entity.Horarios);
-        entity.Horarios = request.Horarios.Select(h => new ClaseHorario
+        entity.Horarios = normalizedRequest.Horarios.Select(h => new ClaseHorario
         {
             DiaSemana = h.DiaSemana,
             HoraInicio = h.HoraInicio,
@@ -1249,15 +1251,15 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         }).ToList();
 
         await DbContext.SaveChangesAsync(cancellationToken);
-        await AuditAsync("clase", entity.ClaseId, "actualizar", request, empresaId, cancellationToken);
+        await AuditAsync("clase", entity.ClaseId, "actualizar", normalizedRequest, empresaId, cancellationToken);
 
-        return new ClaseDto(entity.ClaseId, entity.Nombre, entity.ProfesorEmpresaId, profesor.Persona.NombreCompleto, entity.CupoMaximo, entity.Estado, entity.Horarios.Select(h => new ClaseHorarioDto(h.ClaseHorarioId, h.DiaSemana, h.HoraInicio, h.HoraFin, h.Activo)).ToArray());
+        return new ClaseDto(entity.ClaseId, entity.Nombre, entity.ProfesorEmpresaId, profesor.Persona.NombreCompleto, entity.CupoMaximo, entity.Activo, entity.Horarios.Select(h => new ClaseHorarioDto(h.ClaseHorarioId, h.DiaSemana, h.HoraInicio, h.HoraFin, h.Activo)).ToArray());
     }
 
     private async Task ValidateClaseHorariosAsync(
         long empresaId,
         long profesorEmpresaId,
-        string estadoClase,
+        bool claseActiva,
         IReadOnlyCollection<ClaseHorarioRequestDto> horariosRequest,
         long? excludeClaseId,
         CancellationToken cancellationToken)
@@ -1304,7 +1306,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             }
         }
 
-        if (!string.Equals(estadoClase, "activa", StringComparison.OrdinalIgnoreCase) || activeHorarios.Count == 0)
+        if (!claseActiva || activeHorarios.Count == 0)
         {
             return;
         }
@@ -1313,7 +1315,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             .AsNoTracking()
             .Where(x => x.EmpresaId == empresaId
                 && x.ProfesorEmpresaId == profesorEmpresaId
-                && x.Estado == "activa"
+                && x.Activo
                 && (!excludeClaseId.HasValue || x.ClaseId != excludeClaseId.Value))
             .SelectMany(x => x.Horarios
                 .Where(h => h.Activo)

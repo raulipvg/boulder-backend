@@ -160,7 +160,7 @@ public sealed class ErpBoulderDbContext(DbContextOptions<ErpBoulderDbContext> op
             entity.Property(x => x.Nombre).HasColumnName("nombre");
             entity.Property(x => x.ProfesorEmpresaId).HasColumnName("profesor_empresa_id");
             entity.Property(x => x.CupoMaximo).HasColumnName("cupo_maximo");
-            entity.Property(x => x.Estado).HasColumnName("estado");
+            entity.Property(x => x.Activo).HasColumnName("activo");
             entity.HasOne(x => x.ProfesorEmpresa).WithMany().HasForeignKey(x => x.ProfesorEmpresaId);
             entity.HasMany(x => x.Horarios).WithOne().HasForeignKey(x => x.ClaseId);
         });

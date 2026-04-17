@@ -11,9 +11,9 @@ using Microsoft.AspNetCore.Mvc;
 public sealed class ClasesController(IAdministracionService administracionService) : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyCollection<ClaseDto>>> Get([FromQuery] string? estado, CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyCollection<ClaseDto>>> Get([FromQuery] bool? activo, CancellationToken cancellationToken)
     {
-        return Ok(await administracionService.GetClasesAsync(estado, cancellationToken));
+        return Ok(await administracionService.GetClasesAsync(activo, cancellationToken));
     }
 
     [HttpGet("{claseId:long}")]

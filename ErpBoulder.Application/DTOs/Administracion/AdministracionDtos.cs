@@ -42,8 +42,8 @@ public sealed record CreateTarifasBatchRequestDto(long ProductoEmpresaId, IReadO
 
 public sealed record ClaseHorarioDto(long ClaseHorarioId, short DiaSemana, TimeOnly HoraInicio, TimeOnly HoraFin, bool Activo);
 
-public sealed record ClaseDto(long ClaseId, string Nombre, long ProfesorEmpresaId, string ProfesorNombre, int CupoMaximo, string Estado, IReadOnlyCollection<ClaseHorarioDto> Horarios);
+public sealed record ClaseDto(long ClaseId, string Nombre, long ProfesorEmpresaId, string ProfesorNombre, int CupoMaximo, bool Activo, IReadOnlyCollection<ClaseHorarioDto> Horarios);
 
 public sealed record ClaseHorarioRequestDto(short DiaSemana, TimeOnly HoraInicio, TimeOnly HoraFin, bool Activo);
 
-public sealed record UpsertClaseRequestDto(string Nombre, long ProfesorEmpresaId, int CupoMaximo, string Estado, IReadOnlyCollection<ClaseHorarioRequestDto> Horarios);
+public sealed record UpsertClaseRequestDto(string Nombre, long ProfesorEmpresaId, int CupoMaximo, bool Activo, IReadOnlyCollection<ClaseHorarioRequestDto> Horarios);
