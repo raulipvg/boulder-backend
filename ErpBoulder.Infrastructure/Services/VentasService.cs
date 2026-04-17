@@ -10,6 +10,33 @@ using Microsoft.EntityFrameworkCore;
 
 public sealed class VentasService : ServiceBase, IVentasService
 {
+    private const string TipoClienteGeneralCode = "GENERAL";
+    private const string TipoClienteEstudianteCode = "ESTUDIANTE";
+
+    private sealed record PosCatalogProductInfo(
+        long ProductoEmpresaId,
+        string NombreComercial,
+        string TipoProductoBaseCodigo,
+        string ModoPrecio,
+        decimal? PrecioFijo,
+        bool RequiereCliente,
+        bool GeneraBeneficio,
+        bool VisiblePos,
+        long? ClaseId,
+        long? BloqueHorarioComercialId);
+
+    private sealed record TarifaContext(DateOnly Today, string TipoDia, HashSet<long> ActiveBloqueIds);
+
+    private sealed record TarifaCandidate(
+        long ProductoEmpresaId,
+        string TipoClienteCodigo,
+        decimal Precio,
+        DateOnly VigenciaDesde,
+        string? TipoDia,
+        long? BloqueHorarioComercialId);
+
+    private sealed record BloqueCatalogInfo(string Nombre, TimeOnly HoraInicio, TimeOnly HoraFin);
+
     public VentasService(ErpBoulderDbContext dbContext, ICurrentUserContext currentUser)
         : base(dbContext, currentUser)
     {
@@ -24,34 +51,22 @@ public sealed class VentasService : ServiceBase, IVentasService
             .Include(x => x.TipoProductoBase)
             .Where(x => x.EmpresaId == empresaId && x.Activo && x.VisiblePos && (x.ModoPrecio != "tarifa" || x.TarifaAsociada))
             .OrderBy(x => x.NombreComercial)
-            .Select(x => new
-            {
+            .Select(x => new PosCatalogProductInfo(
                 x.ProductoEmpresaId,
                 x.NombreComercial,
-                TipoProductoBaseCodigo = x.TipoProductoBase.Codigo,
+                x.TipoProductoBase.Codigo,
                 x.ModoPrecio,
                 x.PrecioFijo,
                 x.RequiereCliente,
                 x.GeneraBeneficio,
                 x.VisiblePos,
                 x.ClaseId,
-                x.BloqueHorarioComercialId,
-            })
+                x.BloqueHorarioComercialId))
             .ToListAsync(cancellationToken);
 
-        var classProductIds = productos
-            .Where(x => x.TipoProductoBaseCodigo == ProductBaseCodes.Clases)
+        var tarifaProductIds = productos
+            .Where(x => IsPosTarifaPreviewProductCode(x.TipoProductoBaseCodigo))
             .Select(x => x.ProductoEmpresaId)
-            .ToArray();
-
-        var ticketIndividualProductIds = productos
-            .Where(x => x.TipoProductoBaseCodigo == ProductBaseCodes.TicketIndividual)
-            .Select(x => x.ProductoEmpresaId)
-            .ToArray();
-
-        var tarifaProductIds = classProductIds
-            .Concat(ticketIndividualProductIds)
-            .Distinct()
             .ToArray();
 
         var classIds = productos
@@ -60,187 +75,8 @@ public sealed class VentasService : ServiceBase, IVentasService
             .Distinct()
             .ToArray();
 
-        var classDaysByClaseId = new Dictionary<long, IReadOnlyCollection<string>>();
-
-        if (classIds.Length > 0)
-        {
-            var classScheduleRows = await DbContext.ClaseHorarios
-                .AsNoTracking()
-                .Where(x => classIds.Contains(x.ClaseId) && x.Activo)
-                .Select(x => new { x.ClaseId, x.DiaSemana })
-                .ToListAsync(cancellationToken);
-
-            classDaysByClaseId = classScheduleRows
-                .GroupBy(x => x.ClaseId)
-                .ToDictionary(
-                    group => group.Key,
-                    group => (IReadOnlyCollection<string>)group
-                        .OrderBy(x => x.DiaSemana)
-                        .Select(x => ToDayCode(x.DiaSemana))
-                        .Distinct()
-                        .ToArray());
-        }
-
-        var tarifasByProduct = new Dictionary<long, (decimal? General, decimal? Estudiante)>();
-
-        if (tarifaProductIds.Length > 0)
-        {
-            var now = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(-4));
-            var today = DateOnly.FromDateTime(now.Date);
-            var currentTime = TimeOnly.FromDateTime(now.DateTime);
-            var tipoDia = await GetTipoDiaAsync(today, cancellationToken);
-
-            var activeBloqueIdsAtCurrentTime = await DbContext.BloquesHorariosComerciales
-                .AsNoTracking()
-                .Where(x => x.EmpresaId == empresaId
-                    && x.Activo
-                    && x.HoraInicio <= currentTime
-                    && currentTime < x.HoraFin)
-                .Select(x => x.BloqueHorarioComercialId)
-                .ToArrayAsync(cancellationToken);
-
-            var activeBloqueIdSet = activeBloqueIdsAtCurrentTime.ToHashSet();
-
-            var productMetaById = productos.ToDictionary(
-                x => x.ProductoEmpresaId,
-                x => new
-                {
-                    x.TipoProductoBaseCodigo,
-                });
-
-            var tarifasCandidatas = await (
-                from tarifa in DbContext.TarifasProducto.AsNoTracking()
-                join tipoCliente in DbContext.TiposCliente.AsNoTracking() on tarifa.TipoClienteId equals tipoCliente.TipoClienteId
-                where tarifaProductIds.Contains(tarifa.ProductoEmpresaId)
-                    && tarifa.Activo
-                    && tarifa.VigenciaDesde <= today
-                    && today <= tarifa.VigenciaHasta
-                    && (tipoCliente.Codigo == "GENERAL" || tipoCliente.Codigo == "ESTUDIANTE")
-                select new
-                {
-                    tarifa.ProductoEmpresaId,
-                    TipoClienteCodigo = tipoCliente.Codigo,
-                    tarifa.Precio,
-                    tarifa.VigenciaDesde,
-                    tarifa.TipoDia,
-                    tarifa.BloqueHorarioComercialId,
-                })
-                .ToListAsync(cancellationToken);
-
-            tarifasByProduct = tarifasCandidatas
-                .Select(x =>
-                {
-                    if (!productMetaById.TryGetValue(x.ProductoEmpresaId, out var productMeta))
-                    {
-                        return new
-                        {
-                            x.ProductoEmpresaId,
-                            x.TipoClienteCodigo,
-                            x.Precio,
-                            x.VigenciaDesde,
-                            Include = false,
-                            PreferSpecificBloque = false,
-                        };
-                    }
-
-                    if (productMeta.TipoProductoBaseCodigo == ProductBaseCodes.Clases)
-                    {
-                        return new
-                        {
-                            x.ProductoEmpresaId,
-                            x.TipoClienteCodigo,
-                            x.Precio,
-                            x.VigenciaDesde,
-                            Include = true,
-                            PreferSpecificBloque = false,
-                        };
-                    }
-
-                    if (productMeta.TipoProductoBaseCodigo == ProductBaseCodes.TicketIndividual)
-                    {
-                        if (!MatchesTipoDia(x.TipoDia, tipoDia))
-                        {
-                            return new
-                            {
-                                x.ProductoEmpresaId,
-                                x.TipoClienteCodigo,
-                                x.Precio,
-                                x.VigenciaDesde,
-                                Include = false,
-                                PreferSpecificBloque = false,
-                            };
-                        }
-
-                        if (!x.BloqueHorarioComercialId.HasValue)
-                        {
-                            return new
-                            {
-                                x.ProductoEmpresaId,
-                                x.TipoClienteCodigo,
-                                x.Precio,
-                                x.VigenciaDesde,
-                                Include = true,
-                                PreferSpecificBloque = false,
-                            };
-                        }
-
-                        if (!activeBloqueIdSet.Contains(x.BloqueHorarioComercialId.Value))
-                        {
-                            return new
-                            {
-                                x.ProductoEmpresaId,
-                                x.TipoClienteCodigo,
-                                x.Precio,
-                                x.VigenciaDesde,
-                                Include = false,
-                                PreferSpecificBloque = false,
-                            };
-                        }
-
-                        return new
-                        {
-                            x.ProductoEmpresaId,
-                            x.TipoClienteCodigo,
-                            x.Precio,
-                            x.VigenciaDesde,
-                            Include = true,
-                            PreferSpecificBloque = true,
-                        };
-                    }
-
-                    return new
-                    {
-                        x.ProductoEmpresaId,
-                        x.TipoClienteCodigo,
-                        x.Precio,
-                        x.VigenciaDesde,
-                        Include = false,
-                        PreferSpecificBloque = false,
-                    };
-                })
-                .Where(x => x.Include)
-                .GroupBy(x => x.ProductoEmpresaId)
-                .ToDictionary(
-                    group => group.Key,
-                    group =>
-                    {
-                        var general = group
-                            .Where(x => x.TipoClienteCodigo == "GENERAL")
-                            .OrderByDescending(x => x.PreferSpecificBloque)
-                            .ThenByDescending(x => x.VigenciaDesde)
-                            .Select(x => (decimal?)x.Precio)
-                            .FirstOrDefault();
-
-                        var estudiante = group
-                            .Where(x => x.TipoClienteCodigo == "ESTUDIANTE")
-                            .OrderByDescending(x => x.PreferSpecificBloque)
-                            .ThenByDescending(x => x.VigenciaDesde)
-                            .Select(x => (decimal?)x.Precio)
-                            .FirstOrDefault();
-
-                        return (general, estudiante);
-                    });
-        }
+        var classDaysByClaseId = await BuildClassDaysByClaseIdAsync(classIds, cancellationToken);
+        var tarifasByProduct = await BuildCatalogTarifasByProductAsync(empresaId, productos, tarifaProductIds, cancellationToken);
 
         return productos
             .Select(x =>
@@ -261,9 +97,195 @@ public sealed class VentasService : ServiceBase, IVentasService
                 x.VisiblePos,
                 tarifas.General,
                 tarifas.Estudiante,
+                tarifas.GeneralBloque,
+                tarifas.EstudianteBloque,
                 diasClase);
             })
             .ToList();
+    }
+
+    private async Task<Dictionary<long, IReadOnlyCollection<string>>> BuildClassDaysByClaseIdAsync(long[] classIds, CancellationToken cancellationToken)
+    {
+        if (classIds.Length == 0)
+        {
+            return new Dictionary<long, IReadOnlyCollection<string>>();
+        }
+
+        var classScheduleRows = await DbContext.ClaseHorarios
+            .AsNoTracking()
+            .Where(x => classIds.Contains(x.ClaseId) && x.Activo)
+            .Select(x => new { x.ClaseId, x.DiaSemana })
+            .ToListAsync(cancellationToken);
+
+        return classScheduleRows
+            .GroupBy(x => x.ClaseId)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyCollection<string>)group
+                    .OrderBy(x => x.DiaSemana)
+                    .Select(x => ToDayCode(x.DiaSemana))
+                    .Distinct()
+                    .ToArray());
+    }
+
+    private async Task<Dictionary<long, (decimal? General, decimal? Estudiante, string? GeneralBloque, string? EstudianteBloque)>> BuildCatalogTarifasByProductAsync(
+        long empresaId,
+        IReadOnlyCollection<PosCatalogProductInfo> productos,
+        long[] tarifaProductIds,
+        CancellationToken cancellationToken)
+    {
+        if (tarifaProductIds.Length == 0)
+        {
+            return new Dictionary<long, (decimal? General, decimal? Estudiante, string? GeneralBloque, string? EstudianteBloque)>();
+        }
+
+        var context = await BuildTarifaContextAsync(empresaId, cancellationToken);
+        var productById = productos.ToDictionary(x => x.ProductoEmpresaId, x => x);
+
+        var tarifasCandidatas = await (
+            from tarifa in DbContext.TarifasProducto.AsNoTracking()
+            join tipoCliente in DbContext.TiposCliente.AsNoTracking() on tarifa.TipoClienteId equals tipoCliente.TipoClienteId
+            where tarifaProductIds.Contains(tarifa.ProductoEmpresaId)
+                && tarifa.Activo
+                && tarifa.VigenciaDesde <= context.Today
+                && context.Today <= tarifa.VigenciaHasta
+                && (tipoCliente.Codigo == TipoClienteGeneralCode || tipoCliente.Codigo == TipoClienteEstudianteCode)
+            select new TarifaCandidate(
+                tarifa.ProductoEmpresaId,
+                tipoCliente.Codigo,
+                tarifa.Precio,
+                tarifa.VigenciaDesde,
+                tarifa.TipoDia,
+                tarifa.BloqueHorarioComercialId))
+            .ToListAsync(cancellationToken);
+
+        var bloqueIds = tarifasCandidatas
+            .Where(x => x.BloqueHorarioComercialId.HasValue)
+            .Select(x => x.BloqueHorarioComercialId!.Value)
+            .Distinct()
+            .ToArray();
+
+        var bloquesById = bloqueIds.Length == 0
+            ? new Dictionary<long, BloqueCatalogInfo>()
+            : await DbContext.BloquesHorariosComerciales
+                .AsNoTracking()
+                .Where(x => x.EmpresaId == empresaId && bloqueIds.Contains(x.BloqueHorarioComercialId))
+                .Select(x => new { x.BloqueHorarioComercialId, x.Nombre, x.HoraInicio, x.HoraFin })
+                .ToDictionaryAsync(
+                    x => x.BloqueHorarioComercialId,
+                    x => new BloqueCatalogInfo(x.Nombre, x.HoraInicio, x.HoraFin),
+                    cancellationToken);
+
+        return tarifasCandidatas
+            .Where(candidato =>
+                productById.TryGetValue(candidato.ProductoEmpresaId, out var product)
+                && IsTarifaCandidateValidForProduct(product, candidato, context))
+            .GroupBy(candidato => candidato.ProductoEmpresaId)
+            .ToDictionary(
+                group => group.Key,
+                group =>
+                {
+                    var product = productById[group.Key];
+                    var generalTarifa = SelectTarifaCandidate(group, product, TipoClienteGeneralCode);
+                    var estudianteTarifa = SelectTarifaCandidate(group, product, TipoClienteEstudianteCode);
+
+                    return (
+                        generalTarifa?.Precio,
+                        estudianteTarifa?.Precio,
+                        BuildBloqueLabel(generalTarifa, bloquesById),
+                        BuildBloqueLabel(estudianteTarifa, bloquesById));
+                });
+    }
+
+    private async Task<TarifaContext> BuildTarifaContextAsync(long empresaId, CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(-4));
+        var today = DateOnly.FromDateTime(now.Date);
+        var currentTime = TimeOnly.FromDateTime(now.DateTime);
+        var tipoDia = await GetTipoDiaAsync(today, cancellationToken);
+
+        var activeBloqueIds = await DbContext.BloquesHorariosComerciales
+            .AsNoTracking()
+            .Where(x => x.EmpresaId == empresaId
+                && x.Activo
+                && x.HoraInicio <= currentTime
+                && currentTime < x.HoraFin)
+            .Select(x => x.BloqueHorarioComercialId)
+            .ToArrayAsync(cancellationToken);
+
+        return new TarifaContext(today, tipoDia, activeBloqueIds.ToHashSet());
+    }
+
+    private static bool IsPosTarifaPreviewProductCode(string tipoProductoBaseCodigo)
+    {
+        return string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.Clases, StringComparison.OrdinalIgnoreCase)
+            || IsHorarioTarifaProductCode(tipoProductoBaseCodigo);
+    }
+
+    private static bool IsHorarioTarifaProductCode(string tipoProductoBaseCodigo)
+    {
+        return IsCurrentTimeTarifaProductCode(tipoProductoBaseCodigo)
+            || string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.MensualidadPorHorario, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsCurrentTimeTarifaProductCode(string tipoProductoBaseCodigo)
+    {
+        return string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.TicketIndividual, StringComparison.OrdinalIgnoreCase)
+            || ProductBaseCodes.IsPackTickets(tipoProductoBaseCodigo)
+            || string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.MensualidadTodoHorario, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsTarifaCandidateValidForProduct(PosCatalogProductInfo product, TarifaCandidate candidate, TarifaContext context)
+    {
+        if (string.Equals(product.TipoProductoBaseCodigo, ProductBaseCodes.Clases, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.Equals(product.TipoProductoBaseCodigo, ProductBaseCodes.MensualidadPorHorario, StringComparison.OrdinalIgnoreCase))
+        {
+            return MatchesTipoDia(candidate.TipoDia, context.TipoDia)
+                && product.BloqueHorarioComercialId.HasValue
+                && candidate.BloqueHorarioComercialId == product.BloqueHorarioComercialId;
+        }
+
+        if (!IsCurrentTimeTarifaProductCode(product.TipoProductoBaseCodigo))
+        {
+            return false;
+        }
+
+        return MatchesTipoDia(candidate.TipoDia, context.TipoDia)
+            && (!candidate.BloqueHorarioComercialId.HasValue || context.ActiveBloqueIds.Contains(candidate.BloqueHorarioComercialId.Value));
+    }
+
+    private static TarifaCandidate? SelectTarifaCandidate(IEnumerable<TarifaCandidate> candidates, PosCatalogProductInfo product, string tipoClienteCode)
+    {
+        return candidates
+            .Where(x => x.TipoClienteCodigo == tipoClienteCode)
+            .OrderByDescending(x => ShouldPrioritizeSpecificBloque(product.TipoProductoBaseCodigo) && x.BloqueHorarioComercialId.HasValue)
+            .ThenByDescending(x => x.VigenciaDesde)
+            .FirstOrDefault();
+    }
+
+    private static bool ShouldPrioritizeSpecificBloque(string productCode)
+    {
+        return IsCurrentTimeTarifaProductCode(productCode)
+            || string.Equals(productCode, ProductBaseCodes.MensualidadPorHorario, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? BuildBloqueLabel(TarifaCandidate? tarifa, IReadOnlyDictionary<long, BloqueCatalogInfo> bloquesById)
+    {
+        if (tarifa is null || !tarifa.BloqueHorarioComercialId.HasValue)
+        {
+            return null;
+        }
+
+        if (!bloquesById.TryGetValue(tarifa.BloqueHorarioComercialId.Value, out var bloque))
+        {
+            return null;
+        }
+
+        return $"{bloque.Nombre} ({bloque.HoraInicio:HH\\:mm}-{bloque.HoraFin:HH\\:mm})";
     }
 
     private static string ToDayCode(short diaSemana)
@@ -609,55 +631,51 @@ public sealed class VentasService : ServiceBase, IVentasService
         }
 
         var empresaId = GetRequiredEmpresaId();
-        var now = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(-4));
-        var today = DateOnly.FromDateTime(now.Date);
-        var currentTime = TimeOnly.FromDateTime(now.DateTime);
-        var tipoDia = await GetTipoDiaAsync(today, cancellationToken);
+        var context = await BuildTarifaContextAsync(empresaId, cancellationToken);
+        var productCode = producto.TipoProductoBase.Codigo;
 
-        Domain.Entities.Administracion.TarifaProducto? tarifa;
+        var tarifas = await DbContext.TarifasProducto
+            .Where(x => x.ProductoEmpresaId == producto.ProductoEmpresaId
+                && x.Activo
+                && x.VigenciaDesde <= context.Today
+                && context.Today <= x.VigenciaHasta
+                && x.TipoClienteId == tipoClienteId)
+            .ToListAsync(cancellationToken);
 
-        if (producto.TipoProductoBase.Codigo == ProductBaseCodes.TicketIndividual)
+        IEnumerable<Domain.Entities.Administracion.TarifaProducto> tarifasFiltradas;
+
+        if (string.Equals(productCode, ProductBaseCodes.Clases, StringComparison.OrdinalIgnoreCase))
         {
-            var activeBloqueIdsAtCurrentTime = await DbContext.BloquesHorariosComerciales
-                .AsNoTracking()
-                .Where(x => x.EmpresaId == empresaId
-                    && x.Activo
-                    && x.HoraInicio <= currentTime
-                    && currentTime < x.HoraFin)
-                .Select(x => x.BloqueHorarioComercialId)
-                .ToArrayAsync(cancellationToken);
-
-            var tarifasTicket = await DbContext.TarifasProducto
-                .Where(x => x.ProductoEmpresaId == producto.ProductoEmpresaId
-                    && x.Activo
-                    && x.VigenciaDesde <= today
-                    && today <= x.VigenciaHasta
-                    && x.TipoClienteId == tipoClienteId
-                    && (!x.BloqueHorarioComercialId.HasValue || activeBloqueIdsAtCurrentTime.Contains(x.BloqueHorarioComercialId.Value)))
-                .OrderByDescending(x => x.BloqueHorarioComercialId.HasValue)
-                .ThenByDescending(x => x.VigenciaDesde)
-                .ToListAsync(cancellationToken);
-
-            tarifa = tarifasTicket.FirstOrDefault(x => MatchesTipoDia(x.TipoDia, tipoDia));
+            tarifasFiltradas = tarifas;
+        }
+        else if (string.Equals(productCode, ProductBaseCodes.MensualidadPorHorario, StringComparison.OrdinalIgnoreCase))
+        {
+            tarifasFiltradas = tarifas.Where(x =>
+                MatchesTipoDia(x.TipoDia, context.TipoDia)
+                && producto.BloqueHorarioComercialId.HasValue
+                && x.BloqueHorarioComercialId == producto.BloqueHorarioComercialId);
+        }
+        else if (IsCurrentTimeTarifaProductCode(productCode))
+        {
+            tarifasFiltradas = tarifas.Where(x =>
+                MatchesTipoDia(x.TipoDia, context.TipoDia)
+                && (!x.BloqueHorarioComercialId.HasValue || context.ActiveBloqueIds.Contains(x.BloqueHorarioComercialId.Value)));
         }
         else
         {
-            var tarifas = await DbContext.TarifasProducto
-                .Where(x => x.ProductoEmpresaId == producto.ProductoEmpresaId
-                    && x.Activo
-                    && x.VigenciaDesde <= today
-                    && today <= x.VigenciaHasta
-                    && x.TipoClienteId == tipoClienteId
-                    && x.BloqueHorarioComercialId == producto.BloqueHorarioComercialId)
-                .OrderByDescending(x => x.VigenciaDesde)
-                .ToListAsync(cancellationToken);
-
-            tarifa = tarifas.FirstOrDefault(x => MatchesTipoDia(x.TipoDia, tipoDia));
+            tarifasFiltradas = tarifas.Where(x =>
+                MatchesTipoDia(x.TipoDia, context.TipoDia)
+                && x.BloqueHorarioComercialId == producto.BloqueHorarioComercialId);
         }
+
+        var tarifa = tarifasFiltradas
+            .OrderByDescending(x => ShouldPrioritizeSpecificBloque(productCode) && x.BloqueHorarioComercialId.HasValue)
+            .ThenByDescending(x => x.VigenciaDesde)
+            .FirstOrDefault();
 
         if (tarifa is null)
         {
-            throw new InvalidOperationException($"No existe una tarifa vigente para el producto {producto.NombreComercial} (tipoDia={tipoDia}, tipoClienteId={(tipoClienteId.HasValue ? tipoClienteId.Value : null)}).");
+            throw new InvalidOperationException($"No existe una tarifa vigente para el producto {producto.NombreComercial} (tipoDia={context.TipoDia}, tipoClienteId={(tipoClienteId.HasValue ? tipoClienteId.Value : null)}).");
         }
 
         return tarifa.Precio;

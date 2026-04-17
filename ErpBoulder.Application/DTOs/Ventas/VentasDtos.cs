@@ -11,6 +11,8 @@ public sealed record PosCatalogItemDto(
     bool VisiblePos,
     decimal? TarifaGeneralVigente,
     decimal? TarifaEstudianteVigente,
+    string? TarifaGeneralBloqueHorario,
+    string? TarifaEstudianteBloqueHorario,
     IReadOnlyCollection<string> DiasClase);
 
 public sealed record VentaItemRequestDto(long ProductoEmpresaId, int Cantidad, long? ClienteEmpresaIdAsignado, DateOnly? FechaInicioVigencia, string? Observacion);
