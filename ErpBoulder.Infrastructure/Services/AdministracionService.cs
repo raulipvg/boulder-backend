@@ -1118,15 +1118,24 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         return new TarifaDto(entity.TarifaProductoId, entity.ProductoEmpresaId, producto.NombreComercial, entity.TipoClienteId, tipoClienteNombre, entity.TipoDia, entity.BloqueHorarioComercialId, entity.Precio, entity.VigenciaDesde, entity.VigenciaHasta, entity.Activo);
     }
 
-    public async Task<IReadOnlyCollection<ClaseDto>> GetClasesAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyCollection<ClaseDto>> GetClasesAsync(string? estado, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
+        var estadoFiltro = NormalizeClaseEstado(estado);
+        var horarioActivoFiltro = estadoFiltro == "activa";
 
-        return await DbContext.Clases
+        var query = DbContext.Clases
             .AsNoTracking()
             .Include(x => x.ProfesorEmpresa).ThenInclude(x => x.Persona)
             .Include(x => x.Horarios)
-            .Where(x => x.EmpresaId == empresaId)
+            .Where(x => x.EmpresaId == empresaId);
+
+        if (estadoFiltro is not null)
+        {
+            query = query.Where(x => x.Estado == estadoFiltro && x.Horarios.Any(h => h.Activo == horarioActivoFiltro));
+        }
+
+        return await query
             .OrderBy(x => x.Nombre)
             .Select(x => new ClaseDto(
                 x.ClaseId,
@@ -1135,10 +1144,49 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
                 x.ProfesorEmpresa.Persona.NombreCompleto,
                 x.CupoMaximo,
                 x.Estado,
-                x.Horarios.OrderBy(h => h.DiaSemana).ThenBy(h => h.HoraInicio)
+                x.Horarios
+                    .Where(h => estadoFiltro == null || h.Activo == horarioActivoFiltro)
+                    .OrderBy(h => h.DiaSemana)
+                    .ThenBy(h => h.HoraInicio)
                     .Select(h => new ClaseHorarioDto(h.ClaseHorarioId, h.DiaSemana, h.HoraInicio, h.HoraFin, h.Activo))
                     .ToArray()))
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<ClaseDto> GetClaseByIdAsync(long claseId, CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+
+        return await DbContext.Clases
+            .AsNoTracking()
+            .Include(x => x.ProfesorEmpresa).ThenInclude(x => x.Persona)
+            .Include(x => x.Horarios)
+            .Where(x => x.EmpresaId == empresaId && x.ClaseId == claseId)
+            .Select(x => new ClaseDto(
+                x.ClaseId,
+                x.Nombre,
+                x.ProfesorEmpresaId,
+                x.ProfesorEmpresa.Persona.NombreCompleto,
+                x.CupoMaximo,
+                x.Estado,
+                x.Horarios
+                    .OrderBy(h => h.DiaSemana)
+                    .ThenBy(h => h.HoraInicio)
+                    .Select(h => new ClaseHorarioDto(h.ClaseHorarioId, h.DiaSemana, h.HoraInicio, h.HoraFin, h.Activo))
+                    .ToArray()))
+            .FirstAsync(cancellationToken);
+    }
+
+    private static string? NormalizeClaseEstado(string? estado)
+    {
+        var normalized = (estado ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "" => null,
+            "inactiva" => "inactiva",
+            "activa" => "activa",
+            _ => null
+        };
     }
 
     public async Task<ClaseDto> CreateClaseAsync(UpsertClaseRequestDto request, CancellationToken cancellationToken)
@@ -1147,6 +1195,8 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         var profesor = await DbContext.ProfesoresEmpresa
             .Include(x => x.Persona)
             .FirstAsync(x => x.ProfesorEmpresaId == request.ProfesorEmpresaId && x.EmpresaId == empresaId, cancellationToken);
+
+        await ValidateClaseHorariosAsync(empresaId, request.ProfesorEmpresaId, request.Estado, request.Horarios, null, cancellationToken);
 
         var entity = new Clase
         {
@@ -1178,6 +1228,8 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             .Include(x => x.Persona)
             .FirstAsync(x => x.ProfesorEmpresaId == request.ProfesorEmpresaId && x.EmpresaId == empresaId, cancellationToken);
 
+        await ValidateClaseHorariosAsync(empresaId, request.ProfesorEmpresaId, request.Estado, request.Horarios, claseId, cancellationToken);
+
         var entity = await DbContext.Clases
             .Include(x => x.Horarios)
             .FirstAsync(x => x.ClaseId == claseId && x.EmpresaId == empresaId, cancellationToken);
@@ -1201,6 +1253,103 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
 
         return new ClaseDto(entity.ClaseId, entity.Nombre, entity.ProfesorEmpresaId, profesor.Persona.NombreCompleto, entity.CupoMaximo, entity.Estado, entity.Horarios.Select(h => new ClaseHorarioDto(h.ClaseHorarioId, h.DiaSemana, h.HoraInicio, h.HoraFin, h.Activo)).ToArray());
     }
+
+    private async Task ValidateClaseHorariosAsync(
+        long empresaId,
+        long profesorEmpresaId,
+        string estadoClase,
+        IReadOnlyCollection<ClaseHorarioRequestDto> horariosRequest,
+        long? excludeClaseId,
+        CancellationToken cancellationToken)
+    {
+        if (horariosRequest is null || horariosRequest.Count == 0)
+        {
+            throw new InvalidOperationException("Debe registrar al menos un horario para la clase.");
+        }
+
+        var activeHorarios = horariosRequest
+            .Where(h => h.Activo)
+            .OrderBy(h => h.DiaSemana)
+            .ThenBy(h => h.HoraInicio)
+            .ToList();
+
+        foreach (var horario in horariosRequest)
+        {
+            if (horario.DiaSemana < 1 || horario.DiaSemana > 7)
+            {
+                throw new InvalidOperationException("El dia de semana debe estar entre 1 (lunes) y 7 (domingo).");
+            }
+
+            if (horario.HoraFin <= horario.HoraInicio)
+            {
+                throw new InvalidOperationException("La hora de fin debe ser mayor que la hora de inicio.");
+            }
+        }
+
+        var activeHorariosByDay = activeHorarios
+            .GroupBy(h => h.DiaSemana)
+            .ToDictionary(group => group.Key, group => group.OrderBy(h => h.HoraInicio).ToList());
+
+        foreach (var dayGroup in activeHorariosByDay.Values)
+        {
+            for (var index = 1; index < dayGroup.Count; index++)
+            {
+                var previous = dayGroup[index - 1];
+                var current = dayGroup[index];
+                if (current.HoraInicio < previous.HoraFin)
+                {
+                    throw new InvalidOperationException(
+                        $"La clase tiene horarios cruzados el {GetDiaSemanaLabel(current.DiaSemana)} entre {current.HoraInicio:HH\\:mm} y {previous.HoraFin:HH\\:mm}.");
+                }
+            }
+        }
+
+        if (!string.Equals(estadoClase, "activa", StringComparison.OrdinalIgnoreCase) || activeHorarios.Count == 0)
+        {
+            return;
+        }
+
+        var existingActiveHorarios = await DbContext.Clases
+            .AsNoTracking()
+            .Where(x => x.EmpresaId == empresaId
+                && x.ProfesorEmpresaId == profesorEmpresaId
+                && x.Estado == "activa"
+                && (!excludeClaseId.HasValue || x.ClaseId != excludeClaseId.Value))
+            .SelectMany(x => x.Horarios
+                .Where(h => h.Activo)
+                .Select(h => new { ClaseNombre = x.Nombre, h.DiaSemana, h.HoraInicio, h.HoraFin }))
+            .ToListAsync(cancellationToken);
+
+        foreach (var existing in existingActiveHorarios)
+        {
+            if (!activeHorariosByDay.TryGetValue(existing.DiaSemana, out var dayHorarios))
+            {
+                continue;
+            }
+
+            foreach (var requested in dayHorarios)
+            {
+                if (requested.HoraInicio < existing.HoraFin && existing.HoraInicio < requested.HoraFin)
+                {
+                    throw new InvalidOperationException(
+                        $"El profesor ya tiene la clase '{existing.ClaseNombre}' el {GetDiaSemanaLabel(existing.DiaSemana)} entre {existing.HoraInicio:HH\\:mm} y {existing.HoraFin:HH\\:mm}.");
+                }
+            }
+        }
+    }
+
+    private static string GetDiaSemanaLabel(short diaSemana)
+        => diaSemana switch
+        {
+            1 => "lunes",
+            2 => "martes",
+            3 => "miercoles",
+            4 => "jueves",
+            5 => "viernes",
+            6 => "sabado",
+            7 => "domingo",
+            _ => $"dia {diaSemana}"
+        };
 
     private static UpsertProductoRequestDto NormalizeProductoRequestByType(UpsertProductoRequestDto request, string tipoCodigo)
     {

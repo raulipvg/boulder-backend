@@ -31,7 +31,8 @@ public interface IAdministracionService
     Task<TarifaDto> CreateTarifaAsync(UpsertTarifaRequestDto request, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<TarifaDto>> CreateTarifasBatchAsync(CreateTarifasBatchRequestDto request, CancellationToken cancellationToken);
     Task<TarifaDto> UpdateTarifaAsync(long tarifaProductoId, UpsertTarifaRequestDto request, CancellationToken cancellationToken);
-    Task<IReadOnlyCollection<ClaseDto>> GetClasesAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<ClaseDto>> GetClasesAsync(string? estado, CancellationToken cancellationToken);
+    Task<ClaseDto> GetClaseByIdAsync(long claseId, CancellationToken cancellationToken);
     Task<ClaseDto> CreateClaseAsync(UpsertClaseRequestDto request, CancellationToken cancellationToken);
     Task<ClaseDto> UpdateClaseAsync(long claseId, UpsertClaseRequestDto request, CancellationToken cancellationToken);
 }
