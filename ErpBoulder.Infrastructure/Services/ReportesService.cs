@@ -39,7 +39,7 @@ public sealed class ReportesService : ServiceBase, IReportesService
             .ToListAsync(cancellationToken);
 
         var packTipoId = await DbContext.TiposProductoBase
-            .Where(x => x.Codigo == ProductBaseCodes.PackTickets || x.Codigo == ProductBaseCodes.LegacyPack10Tickets)
+            .Where(x => x.Codigo == ProductBaseCodes.PackTickets)
             .Select(x => (long?)x.TipoProductoBaseId)
             .FirstOrDefaultAsync(cancellationToken);
 

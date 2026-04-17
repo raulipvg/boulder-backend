@@ -225,14 +225,19 @@ public sealed class VentasService : ServiceBase, IVentasService
     private static bool IsHorarioTarifaProductCode(string tipoProductoBaseCodigo)
     {
         return IsCurrentTimeTarifaProductCode(tipoProductoBaseCodigo)
+            || IsPackTarifaProductCode(tipoProductoBaseCodigo)
             || string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.MensualidadPorHorario, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsCurrentTimeTarifaProductCode(string tipoProductoBaseCodigo)
     {
         return string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.TicketIndividual, StringComparison.OrdinalIgnoreCase)
-            || ProductBaseCodes.IsPackTickets(tipoProductoBaseCodigo)
             || string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.MensualidadTodoHorario, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPackTarifaProductCode(string tipoProductoBaseCodigo)
+    {
+        return ProductBaseCodes.IsPackTickets(tipoProductoBaseCodigo);
     }
 
     private static bool IsTarifaCandidateValidForProduct(PosCatalogProductInfo product, TarifaCandidate candidate, TarifaContext context)
@@ -247,6 +252,11 @@ public sealed class VentasService : ServiceBase, IVentasService
             return MatchesTipoDia(candidate.TipoDia, context.TipoDia)
                 && product.BloqueHorarioComercialId.HasValue
                 && candidate.BloqueHorarioComercialId == product.BloqueHorarioComercialId;
+        }
+
+        if (IsPackTarifaProductCode(product.TipoProductoBaseCodigo))
+        {
+            return MatchesTipoDia(candidate.TipoDia, context.TipoDia);
         }
 
         if (!IsCurrentTimeTarifaProductCode(product.TipoProductoBaseCodigo))
@@ -654,6 +664,10 @@ public sealed class VentasService : ServiceBase, IVentasService
                 MatchesTipoDia(x.TipoDia, context.TipoDia)
                 && producto.BloqueHorarioComercialId.HasValue
                 && x.BloqueHorarioComercialId == producto.BloqueHorarioComercialId);
+        }
+        else if (IsPackTarifaProductCode(productCode))
+        {
+            tarifasFiltradas = tarifas.Where(x => MatchesTipoDia(x.TipoDia, context.TipoDia));
         }
         else if (IsCurrentTimeTarifaProductCode(productCode))
         {

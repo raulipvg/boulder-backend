@@ -660,11 +660,6 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
 
         if (normalizedRequest.ModoPrecio == "tarifa")
         {
-            if (normalizedRequest.Activo || normalizedRequest.VisiblePos)
-            {
-                throw new InvalidOperationException("No se puede activar ni mostrar en POS un producto sin tarifa activa asociada.");
-            }
-
             normalizedRequest = normalizedRequest with
             {
                 Activo = false,
@@ -759,11 +754,6 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
 
         if (normalizedRequest.ModoPrecio == "tarifa" && !tarifaAsociada)
         {
-            if (normalizedRequest.Activo || normalizedRequest.VisiblePos)
-            {
-                throw new InvalidOperationException("No se puede activar ni mostrar en POS un producto sin tarifa activa asociada.");
-            }
-
             normalizedRequest = normalizedRequest with
             {
                 Activo = false,
