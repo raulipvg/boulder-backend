@@ -140,7 +140,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             throw new InvalidOperationException($"El horario se solapa con el bloque activo '{overlap.Nombre}' ({overlap.HoraInicio:HH\\:mm}-{overlap.HoraFin:HH\\:mm}).");
     }
 
-    public async Task<IReadOnlyCollection<LookupDto>> GetProfesoresAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyCollection<IdNombreDto>> GetProfesoresAsync(CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
 
@@ -148,7 +148,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             .Include(x => x.Persona)
             .Where(x => x.EmpresaId == empresaId && x.Estado == "activo")
             .OrderBy(x => x.Persona.NombreCompleto)
-            .Select(x => new LookupDto(x.ProfesorEmpresaId, x.Persona.Rut, x.Persona.NombreCompleto))
+            .Select(x => new IdNombreDto(x.ProfesorEmpresaId, x.Persona.NombreCompleto))
             .ToListAsync(cancellationToken);
     }
 
@@ -1118,7 +1118,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
         return new TarifaDto(entity.TarifaProductoId, entity.ProductoEmpresaId, producto.NombreComercial, entity.TipoClienteId, tipoClienteNombre, entity.TipoDia, entity.BloqueHorarioComercialId, entity.Precio, entity.VigenciaDesde, entity.VigenciaHasta, entity.Activo);
     }
 
-    public async Task<IReadOnlyCollection<ClaseDto>> GetClasesAsync(bool? activo, CancellationToken cancellationToken)
+    public async Task<IReadOnlyCollection<ClaseAgendaDto>> GetClasesAsync(bool? activo, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
         var horarioActivoFiltro = activo;
@@ -1137,10 +1137,9 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
 
         return await query
             .OrderBy(x => x.Nombre)
-            .Select(x => new ClaseDto(
+            .Select(x => new ClaseAgendaDto(
                 x.ClaseId,
                 x.Nombre,
-                x.ProfesorEmpresaId,
                 x.ProfesorEmpresa.Persona.NombreCompleto,
                 x.CupoMaximo,
                 x.Activo,
@@ -1148,7 +1147,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
                     .Where(h => !horarioActivoFiltro.HasValue || h.Activo == horarioActivoFiltro.Value)
                     .OrderBy(h => h.DiaSemana)
                     .ThenBy(h => h.HoraInicio)
-                    .Select(h => new ClaseHorarioDto(h.ClaseHorarioId, h.DiaSemana, h.HoraInicio, h.HoraFin, h.Activo))
+                    .Select(h => new ClaseAgendaHorarioDto(h.DiaSemana, h.HoraInicio, h.HoraFin, h.Activo))
                     .ToArray()))
             .ToListAsync(cancellationToken);
     }
@@ -1180,11 +1179,12 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
     public async Task<ClaseDto> CreateClaseAsync(UpsertClaseRequestDto request, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
+        var normalizedHorarios = (request.Horarios ?? Array.Empty<ClaseHorarioRequestDto>())
+            .Select(h => request.Activo ? h : h with { Activo = false })
+            .ToArray();
         var normalizedRequest = request with
         {
-            Horarios = (request.Horarios ?? Array.Empty<ClaseHorarioRequestDto>())
-                .Select(h => h with { Activo = request.Activo })
-                .ToArray()
+            Horarios = normalizedHorarios
         };
 
         var profesor = await DbContext.ProfesoresEmpresa
@@ -1219,22 +1219,34 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
     public async Task<ClaseDto> UpdateClaseAsync(long claseId, UpsertClaseRequestDto request, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
-        var normalizedRequest = request with
-        {
-            Horarios = (request.Horarios ?? Array.Empty<ClaseHorarioRequestDto>())
-                .Select(h => h with { Activo = request.Activo })
-                .ToArray()
-        };
+        var entity = await DbContext.Clases
+            .Include(x => x.Horarios)
+            .FirstAsync(x => x.ClaseId == claseId && x.EmpresaId == empresaId, cancellationToken);
+
+        var normalizedHorarios = (request.Horarios ?? Array.Empty<ClaseHorarioRequestDto>())
+            .Select(h =>
+            {
+                if (!request.Activo)
+                {
+                    return h with { Activo = false };
+                }
+
+                if (!entity.Activo && request.Activo)
+                {
+                    return h with { Activo = true };
+                }
+
+                return h;
+            })
+            .ToArray();
+
+        var normalizedRequest = request with { Horarios = normalizedHorarios };
 
         var profesor = await DbContext.ProfesoresEmpresa
             .Include(x => x.Persona)
             .FirstAsync(x => x.ProfesorEmpresaId == normalizedRequest.ProfesorEmpresaId && x.EmpresaId == empresaId, cancellationToken);
 
         await ValidateClaseHorariosAsync(empresaId, normalizedRequest.ProfesorEmpresaId, normalizedRequest.Activo, normalizedRequest.Horarios, claseId, cancellationToken);
-
-        var entity = await DbContext.Clases
-            .Include(x => x.Horarios)
-            .FirstAsync(x => x.ClaseId == claseId && x.EmpresaId == empresaId, cancellationToken);
 
         entity.Nombre = normalizedRequest.Nombre;
         entity.ProfesorEmpresaId = normalizedRequest.ProfesorEmpresaId;
@@ -1274,6 +1286,11 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             .OrderBy(h => h.DiaSemana)
             .ThenBy(h => h.HoraInicio)
             .ToList();
+
+        if (claseActiva && activeHorarios.Count == 0)
+        {
+            throw new InvalidOperationException("La clase activa debe tener al menos un horario activo.");
+        }
 
         foreach (var horario in horariosRequest)
         {

@@ -2,6 +2,8 @@ namespace ErpBoulder.Application.DTOs.Administracion;
 
 public sealed record LookupDto(long Id, string Codigo, string Nombre);
 
+public sealed record IdNombreDto(long Id, string Nombre);
+
 public sealed record BloqueHorarioDto(long BloqueHorarioComercialId, string Nombre, TimeOnly HoraInicio, TimeOnly HoraFin, bool Activo);
 
 public sealed record UpsertBloqueHorarioRequestDto(string Nombre, TimeOnly HoraInicio, TimeOnly HoraFin, bool Activo);
@@ -41,6 +43,10 @@ public sealed record CreateTarifaBatchItemRequestDto(long TipoClienteId, string?
 public sealed record CreateTarifasBatchRequestDto(long ProductoEmpresaId, IReadOnlyCollection<CreateTarifaBatchItemRequestDto> Tarifas);
 
 public sealed record ClaseHorarioDto(long ClaseHorarioId, short DiaSemana, TimeOnly HoraInicio, TimeOnly HoraFin, bool Activo);
+
+public sealed record ClaseAgendaHorarioDto(short DiaSemana, TimeOnly HoraInicio, TimeOnly HoraFin, bool Activo);
+
+public sealed record ClaseAgendaDto(long ClaseId, string Nombre, string ProfesorNombre, int CupoMaximo, bool Activo, IReadOnlyCollection<ClaseAgendaHorarioDto> Horarios);
 
 public sealed record ClaseDto(long ClaseId, string Nombre, long ProfesorEmpresaId, string ProfesorNombre, int CupoMaximo, bool Activo, IReadOnlyCollection<ClaseHorarioDto> Horarios);
 

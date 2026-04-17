@@ -10,7 +10,7 @@ public interface IAdministracionService
     Task<IReadOnlyCollection<BloqueHorarioDto>> GetBloquesHorariosComercialesAsync(CancellationToken cancellationToken);
     Task<BloqueHorarioDto> CreateBloqueHorarioAsync(UpsertBloqueHorarioRequestDto request, CancellationToken cancellationToken);
     Task<BloqueHorarioDto> UpdateBloqueHorarioAsync(long bloqueHorarioComercialId, UpsertBloqueHorarioRequestDto request, CancellationToken cancellationToken);
-    Task<IReadOnlyCollection<LookupDto>> GetProfesoresAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<IdNombreDto>> GetProfesoresAsync(CancellationToken cancellationToken);
     Task<IReadOnlyCollection<EmpresaDto>> GetEmpresasAsync(CancellationToken cancellationToken);
     Task<EmpresaDto> CreateEmpresaAsync(CreateEmpresaRequestDto request, CancellationToken cancellationToken);
     Task<EmpresaDto> UpdateEmpresaAsync(long empresaId, CreateEmpresaRequestDto request, CancellationToken cancellationToken);
@@ -31,7 +31,7 @@ public interface IAdministracionService
     Task<TarifaDto> CreateTarifaAsync(UpsertTarifaRequestDto request, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<TarifaDto>> CreateTarifasBatchAsync(CreateTarifasBatchRequestDto request, CancellationToken cancellationToken);
     Task<TarifaDto> UpdateTarifaAsync(long tarifaProductoId, UpsertTarifaRequestDto request, CancellationToken cancellationToken);
-    Task<IReadOnlyCollection<ClaseDto>> GetClasesAsync(bool? activo, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<ClaseAgendaDto>> GetClasesAsync(bool? activo, CancellationToken cancellationToken);
     Task<ClaseDto> GetClaseByIdAsync(long claseId, CancellationToken cancellationToken);
     Task<ClaseDto> CreateClaseAsync(UpsertClaseRequestDto request, CancellationToken cancellationToken);
     Task<ClaseDto> UpdateClaseAsync(long claseId, UpsertClaseRequestDto request, CancellationToken cancellationToken);

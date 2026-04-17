@@ -29,7 +29,7 @@ public sealed class CatalogosController(IAdministracionService administracionSer
     }
 
     [HttpGet("profesores")]
-    public async Task<ActionResult<IReadOnlyCollection<LookupDto>>> GetProfesores(CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyCollection<IdNombreDto>>> GetProfesores(CancellationToken cancellationToken)
     {
         return Ok(await administracionService.GetProfesoresAsync(cancellationToken));
     }
