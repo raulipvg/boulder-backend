@@ -295,7 +295,7 @@ public sealed class VentasService : ServiceBase, IVentasService
             return null;
         }
 
-        return $"{bloque.Nombre} ({bloque.HoraInicio:HH\\:mm}-{bloque.HoraFin:HH\\:mm})";
+        return $"({bloque.HoraInicio:HH\\:mm}-{bloque.HoraFin:HH\\:mm})";
     }
 
     private static string ToDayCode(short diaSemana)
