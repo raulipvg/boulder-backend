@@ -163,11 +163,11 @@ public sealed class OperacionService : ServiceBase, IOperacionService
 
         DbContext.AccesoEventos.Add(evento);
 
-        if (autorizado && producto.TipoProductoBase.Codigo != ProductBaseCodes.Clases && !beneficio.AccesoIlimitado && beneficio.UsosTotales.HasValue)
+        if (autorizado && producto.TipoProductoBase.Codigo != ProductBaseCodes.Clases)
         {
             beneficio.UsosConsumidos += 1;
             beneficio.UpdatedAt = DateTimeOffset.UtcNow;
-            if (beneficio.UsosConsumidos >= beneficio.UsosTotales.Value)
+            if (beneficio.UsosTotales.HasValue && beneficio.UsosConsumidos >= beneficio.UsosTotales.Value)
             {
                 beneficio.Estado = "consumido";
             }
@@ -242,14 +242,11 @@ public sealed class OperacionService : ServiceBase, IOperacionService
 
         DbContext.ClaseAsistencias.Add(asistencia);
 
-        if (beneficio.UsosTotales.HasValue)
+        beneficio.UsosConsumidos += 1;
+        beneficio.UpdatedAt = DateTimeOffset.UtcNow;
+        if (beneficio.UsosTotales.HasValue && beneficio.UsosConsumidos >= beneficio.UsosTotales.Value)
         {
-            beneficio.UsosConsumidos += 1;
-            beneficio.UpdatedAt = DateTimeOffset.UtcNow;
-            if (beneficio.UsosConsumidos >= beneficio.UsosTotales.Value)
-            {
-                beneficio.Estado = "consumido";
-            }
+            beneficio.Estado = "consumido";
         }
 
         await DbContext.SaveChangesAsync(cancellationToken);
