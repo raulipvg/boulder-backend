@@ -195,6 +195,68 @@ public sealed class OperacionService : ServiceBase, IOperacionService
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<ClaseSesionInscritoDto>> GetInscritosSesionAsync(long claseSesionId, CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+
+        var sesion = await DbContext.ClaseSesiones
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.EmpresaId == empresaId && x.ClaseSesionId == claseSesionId, cancellationToken)
+            ?? throw new InvalidOperationException("Sesión no encontrada.");
+
+        var asistenciaClienteIds = await DbContext.ClaseAsistencias
+            .AsNoTracking()
+            .Where(x => x.ClaseSesionId == claseSesionId)
+            .Select(x => x.ClienteEmpresaId)
+            .Distinct()
+            .ToHashSetAsync(cancellationToken);
+
+        var candidatos = await DbContext.BeneficiosCliente
+            .AsNoTracking()
+            .Join(DbContext.ClientesEmpresa.AsNoTracking().Include(x => x.Persona), beneficio => beneficio.ClienteEmpresaId, cliente => cliente.ClienteEmpresaId, (beneficio, cliente) => new { beneficio, cliente })
+            .Join(DbContext.ProductosEmpresa.AsNoTracking(), x => x.beneficio.ProductoEmpresaId, producto => producto.ProductoEmpresaId, (x, producto) => new { x.beneficio, x.cliente, producto })
+            .Where(x => x.beneficio.EmpresaId == empresaId
+                && x.beneficio.ClaseId == sesion.ClaseId
+                && x.beneficio.Estado != "anulado"
+                && x.beneficio.FechaInicio <= sesion.Fecha
+                && sesion.Fecha <= x.beneficio.FechaTermino
+                && (x.beneficio.AccesoIlimitado || !x.beneficio.UsosTotales.HasValue || x.beneficio.UsosConsumidos < x.beneficio.UsosTotales.Value))
+            .Select(x => new
+            {
+                x.beneficio.ClienteEmpresaId,
+                ClienteNombre = x.cliente.Persona.NombreCompleto,
+                x.cliente.Persona.Rut,
+                EstadoCliente = x.cliente.Estado,
+                x.beneficio.BeneficioClienteId,
+                ProductoNombre = x.producto.NombreComercial,
+                x.beneficio.UsosTotales,
+                x.beneficio.UsosConsumidos,
+                x.beneficio.AccesoIlimitado,
+                x.beneficio.FechaTermino
+            })
+            .ToListAsync(cancellationToken);
+
+        return candidatos
+            .GroupBy(x => x.ClienteEmpresaId)
+            .Select(group => group
+                .OrderBy(x => x.FechaTermino)
+                .ThenBy(x => x.BeneficioClienteId)
+                .First())
+            .OrderBy(x => x.ClienteNombre)
+            .Select(x => new ClaseSesionInscritoDto(
+                x.ClienteEmpresaId,
+                x.ClienteNombre,
+                x.Rut,
+                x.EstadoCliente,
+                x.BeneficioClienteId,
+                x.ProductoNombre,
+                x.UsosTotales,
+                x.UsosConsumidos,
+                x.AccesoIlimitado,
+                asistenciaClienteIds.Contains(x.ClienteEmpresaId)))
+            .ToList();
+    }
+
     public async Task<ClaseAsistenciaDto> RegistrarAsistenciaAsync(RegisterAttendanceRequestDto request, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();

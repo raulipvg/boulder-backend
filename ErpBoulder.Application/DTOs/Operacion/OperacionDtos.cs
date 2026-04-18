@@ -12,6 +12,18 @@ public sealed record AccessValidationResultDto(bool Autorizado, string Mensaje, 
 
 public sealed record ClaseSesionDto(long ClaseSesionId, DateOnly Fecha, TimeOnly HoraInicio, TimeOnly HoraFin, string ClaseNombre, string ProfesorNombre, int CupoMaximo, string Estado);
 
+public sealed record ClaseSesionInscritoDto(
+    long ClienteEmpresaId,
+    string ClienteNombre,
+    string Rut,
+    string EstadoCliente,
+    long BeneficioClienteId,
+    string ProductoNombre,
+    int? UsosTotales,
+    int UsosConsumidos,
+    bool AccesoIlimitado,
+    bool AsistenciaRegistrada);
+
 public sealed record RegisterAttendanceRequestDto(long ClaseSesionId, long ClienteEmpresaId, long BeneficioClienteId);
 
 public sealed record ClaseAsistenciaDto(long ClaseAsistenciaId, long ClaseSesionId, long ClienteEmpresaId, string Estado, DateTimeOffset FechaHoraRegistro);

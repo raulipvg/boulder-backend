@@ -16,6 +16,12 @@ public sealed class ClasesController(IOperacionService operacionService) : Contr
         return Ok(await operacionService.GetSesionesAsync(fecha, cancellationToken));
     }
 
+    [HttpGet("sesiones/{claseSesionId:long}/inscritos")]
+    public async Task<ActionResult<IReadOnlyCollection<ClaseSesionInscritoDto>>> GetInscritosSesion(long claseSesionId, CancellationToken cancellationToken)
+    {
+        return Ok(await operacionService.GetInscritosSesionAsync(claseSesionId, cancellationToken));
+    }
+
     [HttpPost("asistencias")]
     public async Task<ActionResult<ClaseAsistenciaDto>> RegistrarAsistencia([FromBody] RegisterAttendanceRequestDto request, CancellationToken cancellationToken)
     {

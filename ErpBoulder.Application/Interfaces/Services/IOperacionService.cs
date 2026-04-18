@@ -8,5 +8,6 @@ public interface IOperacionService
     Task<AccessPreviewDto> PrevisualizarAccesoAsync(long clienteEmpresaId, CancellationToken cancellationToken);
     Task<AccessValidationResultDto> ValidarAccesoAsync(ValidateAccessRequestDto request, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<ClaseSesionDto>> GetSesionesAsync(DateOnly? fecha, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<ClaseSesionInscritoDto>> GetInscritosSesionAsync(long claseSesionId, CancellationToken cancellationToken);
     Task<ClaseAsistenciaDto> RegistrarAsistenciaAsync(RegisterAttendanceRequestDto request, CancellationToken cancellationToken);
 }
