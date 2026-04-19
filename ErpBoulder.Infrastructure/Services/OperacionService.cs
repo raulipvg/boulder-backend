@@ -39,7 +39,7 @@ public sealed class OperacionService : ServiceBase, IOperacionService
     public async Task<AccessPreviewDto> PrevisualizarAccesoAsync(long clienteEmpresaId, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
-        var today = DateOnly.FromDateTime(DateTime.UtcNow.Date);
+        var (_, today, currentTime, startOfDayUtc, endOfDayUtc) = GetChileAccessTimeContext();
 
         var cliente = await DbContext.ClientesEmpresa
             .AsNoTracking()
@@ -47,7 +47,7 @@ public sealed class OperacionService : ServiceBase, IOperacionService
             .FirstOrDefaultAsync(x => x.EmpresaId == empresaId && x.ClienteEmpresaId == clienteEmpresaId, cancellationToken)
             ?? throw new InvalidOperationException("Cliente no encontrado.");
 
-        var opciones = await DbContext.BeneficiosCliente
+        var opcionesBase = await DbContext.BeneficiosCliente
             .AsNoTracking()
             .Join(DbContext.ProductosEmpresa, b => b.ProductoEmpresaId, p => p.ProductoEmpresaId, (beneficio, producto) => new { beneficio, producto })
             .Where(x => x.beneficio.EmpresaId == empresaId
@@ -57,15 +57,128 @@ public sealed class OperacionService : ServiceBase, IOperacionService
                 && today <= x.beneficio.FechaTermino
                 && (x.beneficio.UsosTotales == null || x.beneficio.AccesoIlimitado || x.beneficio.UsosConsumidos < x.beneficio.UsosTotales))
             .OrderBy(x => x.producto.NombreComercial)
-            .Select(x => new AccessOptionDto(
+            .Select(x => new
+            {
                 x.beneficio.BeneficioClienteId,
-                x.producto.NombreComercial,
+                ProductoNombre = x.producto.NombreComercial,
                 x.beneficio.Estado,
                 x.beneficio.FechaInicio,
                 x.beneficio.FechaTermino,
                 x.beneficio.UsosTotales,
-                x.beneficio.UsosConsumidos))
+                x.beneficio.UsosConsumidos,
+                x.beneficio.ClaseId,
+                x.beneficio.BloqueHorarioComercialId
+            })
             .ToListAsync(cancellationToken);
+
+        var noClaseBeneficioIds = opcionesBase
+            .Where(x => !x.ClaseId.HasValue)
+            .Select(x => x.BeneficioClienteId)
+            .Distinct()
+            .ToArray();
+
+        var claseBeneficioIds = opcionesBase
+            .Where(x => x.ClaseId.HasValue)
+            .Select(x => x.BeneficioClienteId)
+            .Distinct()
+            .ToArray();
+
+        var beneficiosValidadosHoy = noClaseBeneficioIds.Length == 0
+            ? new HashSet<long>()
+            : await DbContext.AccesoEventos
+                .AsNoTracking()
+                .Where(x => x.EmpresaId == empresaId
+                    && x.Resultado == "autorizado"
+                    && x.BeneficioClienteId.HasValue
+                    && noClaseBeneficioIds.Contains(x.BeneficioClienteId.Value)
+                    && x.FechaHora >= startOfDayUtc
+                    && x.FechaHora < endOfDayUtc)
+                .Select(x => x.BeneficioClienteId!.Value)
+                .Distinct()
+                .ToHashSetAsync(cancellationToken);
+
+        var bloqueIds = opcionesBase
+            .Where(x => !x.ClaseId.HasValue && x.BloqueHorarioComercialId.HasValue)
+            .Select(x => x.BloqueHorarioComercialId!.Value)
+            .Distinct()
+            .ToArray();
+
+        var beneficiosConAsistenciaHoy = claseBeneficioIds.Length == 0
+            ? new HashSet<long>()
+            : await DbContext.ClaseAsistencias
+                .AsNoTracking()
+                .Join(DbContext.ClaseSesiones.AsNoTracking(), a => a.ClaseSesionId, s => s.ClaseSesionId, (asistencia, sesion) => new { asistencia, sesion })
+                .Where(x => x.sesion.EmpresaId == empresaId
+                    && x.sesion.Fecha == today
+                    && x.asistencia.ClienteEmpresaId == clienteEmpresaId
+                    && claseBeneficioIds.Contains(x.asistencia.BeneficioClienteId))
+                .Select(x => x.asistencia.BeneficioClienteId)
+                .Distinct()
+                .ToHashSetAsync(cancellationToken);
+
+        var bloques = bloqueIds.Length == 0
+            ? new Dictionary<long, (TimeOnly HoraInicio, TimeOnly HoraFin)>()
+            : await DbContext.BloquesHorariosComerciales
+                .AsNoTracking()
+                .Where(x => bloqueIds.Contains(x.BloqueHorarioComercialId))
+                .Select(x => new { x.BloqueHorarioComercialId, x.HoraInicio, x.HoraFin })
+                .ToDictionaryAsync(x => x.BloqueHorarioComercialId, x => (x.HoraInicio, x.HoraFin), cancellationToken);
+
+        var opciones = opcionesBase
+            .Select(option =>
+            {
+                if (option.ClaseId.HasValue)
+                {
+                    var asistenciaYaRegistradaHoy = beneficiosConAsistenciaHoy.Contains(option.BeneficioClienteId);
+                    return new AccessOptionDto(
+                        option.BeneficioClienteId,
+                        option.ProductoNombre,
+                        option.Estado,
+                        option.FechaInicio,
+                        option.FechaTermino,
+                        option.UsosTotales,
+                        option.UsosConsumidos,
+                        !asistenciaYaRegistradaHoy,
+                        false,
+                        true,
+                        asistenciaYaRegistradaHoy ? "La asistencia de clase ya fue registrada hoy." : null);
+                }
+
+                var yaValidadoHoy = beneficiosValidadosHoy.Contains(option.BeneficioClienteId);
+                var dentroBloqueHorario = option.BloqueHorarioComercialId.HasValue
+                    && bloques.TryGetValue(option.BloqueHorarioComercialId.Value, out var bloque)
+                    && bloque.HoraInicio <= currentTime
+                    && currentTime <= bloque.HoraFin;
+
+                string? motivoNoValidable = null;
+                if (!option.BloqueHorarioComercialId.HasValue || !bloques.ContainsKey(option.BloqueHorarioComercialId.Value))
+                {
+                    motivoNoValidable = "El beneficio no tiene bloque horario configurado.";
+                }
+                else if (!dentroBloqueHorario)
+                {
+                    motivoNoValidable = "Fuera del bloque horario autorizado.";
+                }
+
+                if (yaValidadoHoy)
+                {
+                    motivoNoValidable = "Este beneficio ya fue validado hoy.";
+                }
+
+                return new AccessOptionDto(
+                    option.BeneficioClienteId,
+                    option.ProductoNombre,
+                    option.Estado,
+                    option.FechaInicio,
+                    option.FechaTermino,
+                    option.UsosTotales,
+                    option.UsosConsumidos,
+                    motivoNoValidable is null,
+                    yaValidadoHoy,
+                    dentroBloqueHorario,
+                    motivoNoValidable);
+            })
+            .ToList();
 
         return new AccessPreviewDto(cliente.ClienteEmpresaId, cliente.Persona.NombreCompleto, cliente.Estado, opciones);
     }
@@ -74,9 +187,7 @@ public sealed class OperacionService : ServiceBase, IOperacionService
     {
         var empresaId = GetRequiredEmpresaId();
         var usuarioId = GetRequiredUserId();
-        var now = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(-4));
-        var today = DateOnly.FromDateTime(now.Date);
-        var currentTime = TimeOnly.FromDateTime(now.DateTime);
+        var (_, today, currentTime, startOfDayUtc, endOfDayUtc) = GetChileAccessTimeContext();
 
         var cliente = await DbContext.ClientesEmpresa
             .AsNoTracking()
@@ -111,42 +222,73 @@ public sealed class OperacionService : ServiceBase, IOperacionService
             mensaje = "El beneficio ya no tiene saldo disponible.";
         }
 
-        if (autorizado && beneficio.BloqueHorarioComercialId.HasValue)
+        if (autorizado && beneficio.ClaseId.HasValue)
         {
-            var bloque = await DbContext.BloquesHorariosComerciales.FirstAsync(x => x.BloqueHorarioComercialId == beneficio.BloqueHorarioComercialId, cancellationToken);
-            if (currentTime < bloque.HoraInicio || currentTime > bloque.HoraFin)
+            var asistenciaYaRegistradaHoy = await DbContext.ClaseAsistencias
+                .AsNoTracking()
+                .Join(DbContext.ClaseSesiones.AsNoTracking(), a => a.ClaseSesionId, s => s.ClaseSesionId, (asistencia, sesion) => new { asistencia, sesion })
+                .AnyAsync(x => x.sesion.EmpresaId == empresaId
+                    && x.sesion.Fecha == today
+                    && x.asistencia.ClienteEmpresaId == request.ClienteEmpresaId
+                    && x.asistencia.BeneficioClienteId == beneficio.BeneficioClienteId,
+                    cancellationToken);
+
+            if (asistenciaYaRegistradaHoy)
             {
                 autorizado = false;
-                mensaje = "Fuera del bloque horario autorizado.";
+                mensaje = "La asistencia de clase ya fue registrada hoy.";
             }
         }
 
-        if (autorizado && producto.TipoProductoBase.Codigo == ProductBaseCodes.Clases)
+        if (autorizado && !beneficio.ClaseId.HasValue)
         {
-            var dayOfWeek = now.DayOfWeek switch
-            {
-                DayOfWeek.Monday => (short)1,
-                DayOfWeek.Tuesday => (short)2,
-                DayOfWeek.Wednesday => (short)3,
-                DayOfWeek.Thursday => (short)4,
-                DayOfWeek.Friday => (short)5,
-                DayOfWeek.Saturday => (short)6,
-                _ => (short)7
-            };
-
-            var allowed = await DbContext.ClaseHorarios.AnyAsync(x =>
-                x.ClaseId == beneficio.ClaseId
-                && x.Activo
-                && x.DiaSemana == dayOfWeek
-                && x.HoraInicio <= currentTime
-                && currentTime <= x.HoraFin,
-                cancellationToken);
-
-            if (!allowed)
+            if (!beneficio.BloqueHorarioComercialId.HasValue)
             {
                 autorizado = false;
-                mensaje = "La clase no está autorizada en este horario.";
+                mensaje = "El beneficio no tiene bloque horario configurado.";
             }
+            else
+            {
+                var bloque = await DbContext.BloquesHorariosComerciales
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.BloqueHorarioComercialId == beneficio.BloqueHorarioComercialId.Value, cancellationToken);
+
+                if (bloque is null)
+                {
+                    autorizado = false;
+                    mensaje = "El beneficio no tiene bloque horario configurado.";
+                }
+                else if (currentTime < bloque.HoraInicio || currentTime > bloque.HoraFin)
+                {
+                    autorizado = false;
+                    mensaje = "Fuera del bloque horario autorizado.";
+                }
+            }
+        }
+
+        if (autorizado && !beneficio.ClaseId.HasValue)
+        {
+            var accesoAutorizadoHoy = await DbContext.AccesoEventos
+                .AsNoTracking()
+                .AnyAsync(x =>
+                    x.EmpresaId == empresaId
+                    && x.ClienteEmpresaId == request.ClienteEmpresaId
+                    && x.BeneficioClienteId == beneficio.BeneficioClienteId
+                    && x.Resultado == "autorizado"
+                    && x.FechaHora >= startOfDayUtc
+                    && x.FechaHora < endOfDayUtc,
+                    cancellationToken);
+
+            if (accesoAutorizadoHoy)
+            {
+                autorizado = false;
+                mensaje = "Este beneficio ya fue validado hoy.";
+            }
+        }
+
+        if (!autorizado)
+        {
+            return new AccessValidationResultDto(false, mensaje, null, beneficio.BeneficioClienteId, producto.NombreComercial);
         }
 
         var evento = new Domain.Entities.Operacion.AccesoEvento
@@ -157,13 +299,13 @@ public sealed class OperacionService : ServiceBase, IOperacionService
             ProductoEmpresaId = producto.ProductoEmpresaId,
             UsuarioValidadorId = usuarioId,
             FechaHora = DateTimeOffset.UtcNow,
-            Resultado = autorizado ? "autorizado" : "rechazado",
-            MotivoRechazo = autorizado ? null : mensaje
+            Resultado = "autorizado",
+            MotivoRechazo = null
         };
 
         DbContext.AccesoEventos.Add(evento);
 
-        if (autorizado && producto.TipoProductoBase.Codigo != ProductBaseCodes.Clases)
+        if (producto.TipoProductoBase.Codigo != ProductBaseCodes.Clases)
         {
             beneficio.UsosConsumidos += 1;
             beneficio.UpdatedAt = DateTimeOffset.UtcNow;
@@ -175,7 +317,54 @@ public sealed class OperacionService : ServiceBase, IOperacionService
 
         await DbContext.SaveChangesAsync(cancellationToken);
 
-        return new AccessValidationResultDto(autorizado, mensaje, evento.AccesoEventoId, beneficio.BeneficioClienteId, producto.NombreComercial);
+        return new AccessValidationResultDto(true, mensaje, evento.AccesoEventoId, beneficio.BeneficioClienteId, producto.NombreComercial);
+    }
+
+    private static TimeZoneInfo GetChileTimeZone()
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById("America/Santiago");
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById("Pacific SA Standard Time");
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                throw new InvalidOperationException("No se encontró la zona horaria de Chile en el sistema.");
+            }
+            catch (InvalidTimeZoneException)
+            {
+                throw new InvalidOperationException("La zona horaria de Chile es inválida en el sistema.");
+            }
+        }
+        catch (InvalidTimeZoneException)
+        {
+            throw new InvalidOperationException("La zona horaria de Chile es inválida en el sistema.");
+        }
+    }
+
+    private static (DateTimeOffset NowLocal, DateOnly TodayLocal, TimeOnly CurrentTimeLocal, DateTimeOffset StartOfDayUtc, DateTimeOffset EndOfDayUtc) GetChileAccessTimeContext()
+    {
+        var chileTimeZone = GetChileTimeZone();
+        var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, chileTimeZone);
+
+        var localDate = nowLocal.Date;
+        var startOfDayLocal = DateTime.SpecifyKind(localDate, DateTimeKind.Unspecified);
+        var endOfDayLocal = startOfDayLocal.AddDays(1);
+
+        var startOfDayUtc = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(startOfDayLocal, chileTimeZone), TimeSpan.Zero);
+        var endOfDayUtc = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(endOfDayLocal, chileTimeZone), TimeSpan.Zero);
+
+        return (
+            nowLocal,
+            DateOnly.FromDateTime(nowLocal.DateTime),
+            TimeOnly.FromDateTime(nowLocal.DateTime),
+            startOfDayUtc,
+            endOfDayUtc);
     }
 
     public async Task<IReadOnlyCollection<ClaseSesionDto>> GetSesionesAsync(DateOnly? fecha, CancellationToken cancellationToken)

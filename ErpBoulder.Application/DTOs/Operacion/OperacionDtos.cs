@@ -2,7 +2,18 @@ namespace ErpBoulder.Application.DTOs.Operacion;
 
 public sealed record ClienteLookupDto(long ClienteEmpresaId, string NombreCompleto, string Rut, string Estado, string TipoCliente);
 
-public sealed record AccessOptionDto(long BeneficioClienteId, string ProductoNombre, string Estado, DateOnly FechaInicio, DateOnly FechaTermino, int? UsosTotales, int UsosConsumidos);
+public sealed record AccessOptionDto(
+    long BeneficioClienteId,
+    string ProductoNombre,
+    string Estado,
+    DateOnly FechaInicio,
+    DateOnly FechaTermino,
+    int? UsosTotales,
+    int UsosConsumidos,
+    bool PuedeValidarAhora,
+    bool YaValidadoHoy,
+    bool DentroBloqueHorario,
+    string? MotivoNoValidable);
 
 public sealed record AccessPreviewDto(long ClienteEmpresaId, string ClienteNombre, string EstadoCliente, IReadOnlyCollection<AccessOptionDto> Opciones);
 
