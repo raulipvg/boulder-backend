@@ -11,9 +11,15 @@ using Microsoft.AspNetCore.Mvc;
 public sealed class VentasController(IVentasService ventasService) : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyCollection<VentaDto>>> Get(CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyCollection<VentaResumenDto>>> Get([FromQuery] string? estado, CancellationToken cancellationToken)
     {
-        return Ok(await ventasService.GetVentasAsync(cancellationToken));
+        return Ok(await ventasService.GetVentasAsync(estado, cancellationToken));
+    }
+
+    [HttpGet("{ventaId:long}")]
+    public async Task<ActionResult<VentaDto>> GetById(long ventaId, CancellationToken cancellationToken)
+    {
+        return Ok(await ventasService.GetVentaAsync(ventaId, cancellationToken));
     }
 
     [HttpPost("{ventaId:long}/anular")]

@@ -542,20 +542,39 @@ public sealed class VentasService : ServiceBase, IVentasService
         return await GetVentaAsync(venta.VentaId, cancellationToken);
     }
 
-    public async Task<IReadOnlyCollection<VentaDto>> GetVentasAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyCollection<VentaResumenDto>> GetVentasAsync(string? estado, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
-        var ventas = await DbContext.Ventas
+        var estadoNormalizado = estado?.Trim().ToLowerInvariant();
+
+        var query = DbContext.Ventas
             .AsNoTracking()
-            .Include(x => x.ClienteEmpresa).ThenInclude(x => x!.Persona)
-            .Include(x => x.Detalles).ThenInclude(x => x.BeneficioCliente)
-            .Include(x => x.Pagos).ThenInclude(x => x.MedioPago)
-            .Where(x => x.EmpresaId == empresaId)
+            .Where(x => x.EmpresaId == empresaId);
+
+        if (estadoNormalizado == "emitida" || estadoNormalizado == "anulada")
+        {
+            query = query.Where(x => x.Estado == estadoNormalizado);
+        }
+
+        return await query
             .OrderByDescending(x => x.FechaHora)
             .Take(100)
+            .Select(x => new VentaResumenDto(
+                x.VentaId,
+                x.NumeroComprobante,
+                x.FechaHora,
+                x.Estado,
+                x.Total,
+                x.ClienteEmpresa != null ? x.ClienteEmpresa.Persona.NombreCompleto : null,
+                x.MotivoAnulacion))
             .ToListAsync(cancellationToken);
+    }
 
-        return ventas.Select(MapVenta).ToList();
+    public async Task<VentaDto> GetVentaAsync(long ventaId, CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+        var venta = await GetVentaEntityForDetailAsync(empresaId, ventaId, cancellationToken);
+        return MapVenta(venta);
     }
 
     public async Task<VentaDto> AnularVentaAsync(long ventaId, CancelVentaRequestDto request, CancellationToken cancellationToken)
@@ -596,16 +615,14 @@ public sealed class VentasService : ServiceBase, IVentasService
         return await GetVentaAsync(venta.VentaId, cancellationToken);
     }
 
-    private async Task<VentaDto> GetVentaAsync(long ventaId, CancellationToken cancellationToken)
+    private async Task<Venta> GetVentaEntityForDetailAsync(long empresaId, long ventaId, CancellationToken cancellationToken)
     {
-        var venta = await DbContext.Ventas
+        return await DbContext.Ventas
             .AsNoTracking()
             .Include(x => x.ClienteEmpresa).ThenInclude(x => x!.Persona)
             .Include(x => x.Detalles).ThenInclude(x => x.BeneficioCliente)
             .Include(x => x.Pagos).ThenInclude(x => x.MedioPago)
-            .FirstAsync(x => x.VentaId == ventaId, cancellationToken);
-
-        return MapVenta(venta);
+            .FirstAsync(x => x.EmpresaId == empresaId && x.VentaId == ventaId, cancellationToken);
     }
 
     private static VentaDto MapVenta(Venta venta)

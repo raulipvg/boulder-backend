@@ -31,6 +31,8 @@ public sealed record VentaPagoDto(long VentaPagoId, string MedioPago, decimal Mo
 
 public sealed record VentaDetalleDto(long VentaDetalleId, long ProductoEmpresaId, string ProductoNombre, int Cantidad, decimal PrecioUnitario, decimal Subtotal, DateOnly? FechaInicioVigencia, long? BeneficioClienteId);
 
+public sealed record VentaResumenDto(long VentaId, string NumeroComprobante, DateTimeOffset FechaHora, string Estado, decimal Total, string? ClienteNombre, string? MotivoAnulacion);
+
 public sealed record VentaDto(long VentaId, string NumeroComprobante, DateTimeOffset FechaHora, string Estado, decimal Subtotal, decimal Descuento, decimal Total, long? ClienteEmpresaId, string? ClienteNombre, IReadOnlyCollection<VentaDetalleDto> Detalles, IReadOnlyCollection<VentaPagoDto> Pagos, string? MotivoAnulacion);
 
 public sealed record CancelVentaRequestDto(string Motivo);
