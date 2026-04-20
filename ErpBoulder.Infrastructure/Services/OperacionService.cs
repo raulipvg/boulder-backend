@@ -4,11 +4,30 @@ using ErpBoulder.Application.DTOs.Operacion;
 using ErpBoulder.Application.Interfaces.Common;
 using ErpBoulder.Application.Interfaces.Services;
 using ErpBoulder.Domain.Constants;
+using ErpBoulder.Domain.Entities.Ventas;
 using ErpBoulder.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 public sealed class OperacionService : ServiceBase, IOperacionService
 {
+    private sealed record AccessBenefitCandidate(
+        long BeneficioClienteId,
+        long ProductoEmpresaId,
+        string ProductoNombre,
+        string TipoProductoBaseCodigo,
+        string Estado,
+        DateOnly FechaInicio,
+        DateOnly FechaTermino,
+        int? UsosTotales,
+        int UsosConsumidos,
+        bool AccesoIlimitado,
+        long? BloqueHorarioComercialId,
+        DateTimeOffset CreatedAt);
+
+    private sealed record CommercialBlockWindow(TimeOnly HoraInicio, TimeOnly HoraFin);
+    private sealed record ClassScheduleWindow(TimeOnly HoraInicio, TimeOnly HoraFin);
+
     public OperacionService(ErpBoulderDbContext dbContext, ICurrentUserContext currentUser)
         : base(dbContext, currentUser)
     {
@@ -39,7 +58,7 @@ public sealed class OperacionService : ServiceBase, IOperacionService
     public async Task<AccessPreviewDto> PrevisualizarAccesoAsync(long clienteEmpresaId, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
-        var (_, today, currentTime, startOfDayUtc, endOfDayUtc) = GetChileAccessTimeContext();
+        var chileTime = GetChileTimeContext();
 
         var cliente = await DbContext.ClientesEmpresa
             .AsNoTracking()
@@ -49,121 +68,91 @@ public sealed class OperacionService : ServiceBase, IOperacionService
 
         var opcionesBase = await DbContext.BeneficiosCliente
             .AsNoTracking()
-            .Join(DbContext.ProductosEmpresa, b => b.ProductoEmpresaId, p => p.ProductoEmpresaId, (beneficio, producto) => new { beneficio, producto })
-            .Where(x => x.beneficio.EmpresaId == empresaId
-                && x.beneficio.ClienteEmpresaId == clienteEmpresaId
-                && x.beneficio.Estado != "anulado"
-                && x.beneficio.FechaInicio <= today
-                && today <= x.beneficio.FechaTermino
-                && (x.beneficio.UsosTotales == null || x.beneficio.AccesoIlimitado || x.beneficio.UsosConsumidos < x.beneficio.UsosTotales))
-            .OrderBy(x => x.producto.NombreComercial)
-            .Select(x => new
-            {
+            .Where(beneficio => beneficio.EmpresaId == empresaId
+                && beneficio.ClienteEmpresaId == clienteEmpresaId
+                && beneficio.Estado == "vigente"
+                && beneficio.FechaInicio <= chileTime.TodayLocal
+                && chileTime.TodayLocal <= beneficio.FechaTermino
+                && (beneficio.AccesoIlimitado || beneficio.UsosTotales.HasValue && beneficio.UsosConsumidos < beneficio.UsosTotales.Value))
+            .Join(
+                DbContext.ProductosEmpresa.AsNoTracking(),
+                beneficio => beneficio.ProductoEmpresaId,
+                producto => producto.ProductoEmpresaId,
+                (beneficio, producto) => new { beneficio, producto })
+            .Join(
+                DbContext.TiposProductoBase.AsNoTracking(),
+                x => x.producto.TipoProductoBaseId,
+                tipoProductoBase => tipoProductoBase.TipoProductoBaseId,
+                (x, tipoProductoBase) => new { x.beneficio, x.producto, tipoProductoBase })
+            .Where(x => x.tipoProductoBase.Codigo == ProductBaseCodes.TicketIndividual
+                || x.tipoProductoBase.Codigo == ProductBaseCodes.PackTickets
+                || x.tipoProductoBase.Codigo == ProductBaseCodes.MensualidadPorHorario
+                || x.tipoProductoBase.Codigo == ProductBaseCodes.MensualidadTodoHorario)
+            .Select(x => new AccessBenefitCandidate(
                 x.beneficio.BeneficioClienteId,
-                ProductoNombre = x.producto.NombreComercial,
+                x.producto.ProductoEmpresaId,
+                x.producto.NombreComercial,
+                x.tipoProductoBase.Codigo,
                 x.beneficio.Estado,
                 x.beneficio.FechaInicio,
                 x.beneficio.FechaTermino,
                 x.beneficio.UsosTotales,
                 x.beneficio.UsosConsumidos,
-                x.beneficio.ClaseId,
-                x.beneficio.BloqueHorarioComercialId
-            })
+                x.beneficio.AccesoIlimitado,
+                x.beneficio.BloqueHorarioComercialId,
+                x.beneficio.CreatedAt))
             .ToListAsync(cancellationToken);
 
-        var noClaseBeneficioIds = opcionesBase
-            .Where(x => !x.ClaseId.HasValue)
+        var beneficioIds = opcionesBase
             .Select(x => x.BeneficioClienteId)
             .Distinct()
             .ToArray();
 
-        var claseBeneficioIds = opcionesBase
-            .Where(x => x.ClaseId.HasValue)
-            .Select(x => x.BeneficioClienteId)
-            .Distinct()
-            .ToArray();
-
-        var beneficiosValidadosHoy = noClaseBeneficioIds.Length == 0
+        var beneficiosValidadosHoy = beneficioIds.Length == 0
             ? new HashSet<long>()
             : await DbContext.AccesoEventos
                 .AsNoTracking()
                 .Where(x => x.EmpresaId == empresaId
+                    && x.ClienteEmpresaId == clienteEmpresaId
                     && x.Resultado == "autorizado"
                     && x.BeneficioClienteId.HasValue
-                    && noClaseBeneficioIds.Contains(x.BeneficioClienteId.Value)
-                    && x.FechaHora >= startOfDayUtc
-                    && x.FechaHora < endOfDayUtc)
+                    && beneficioIds.Contains(x.BeneficioClienteId.Value)
+                    && x.FechaHora >= chileTime.StartOfDayUtc
+                    && x.FechaHora < chileTime.EndOfDayUtc)
                 .Select(x => x.BeneficioClienteId!.Value)
                 .Distinct()
                 .ToHashSetAsync(cancellationToken);
 
-        var bloqueIds = opcionesBase
-            .Where(x => !x.ClaseId.HasValue && x.BloqueHorarioComercialId.HasValue)
-            .Select(x => x.BloqueHorarioComercialId!.Value)
-            .Distinct()
-            .ToArray();
+        var bloques = await GetActiveCommercialBlocksByIdsAsync(
+            empresaId,
+            opcionesBase.Where(x => x.BloqueHorarioComercialId.HasValue).Select(x => x.BloqueHorarioComercialId!.Value),
+            cancellationToken);
 
-        var beneficiosConAsistenciaHoy = claseBeneficioIds.Length == 0
-            ? new HashSet<long>()
-            : await DbContext.ClaseAsistencias
-                .AsNoTracking()
-                .Join(DbContext.ClaseSesiones.AsNoTracking(), a => a.ClaseSesionId, s => s.ClaseSesionId, (asistencia, sesion) => new { asistencia, sesion })
-                .Where(x => x.sesion.EmpresaId == empresaId
-                    && x.sesion.Fecha == today
-                    && x.asistencia.ClienteEmpresaId == clienteEmpresaId
-                    && claseBeneficioIds.Contains(x.asistencia.BeneficioClienteId))
-                .Select(x => x.asistencia.BeneficioClienteId)
-                .Distinct()
-                .ToHashSetAsync(cancellationToken);
-
-        var bloques = bloqueIds.Length == 0
-            ? new Dictionary<long, (TimeOnly HoraInicio, TimeOnly HoraFin)>()
-            : await DbContext.BloquesHorariosComerciales
-                .AsNoTracking()
-                .Where(x => bloqueIds.Contains(x.BloqueHorarioComercialId))
-                .Select(x => new { x.BloqueHorarioComercialId, x.HoraInicio, x.HoraFin })
-                .ToDictionaryAsync(x => x.BloqueHorarioComercialId, x => (x.HoraInicio, x.HoraFin), cancellationToken);
+        var clienteActivo = string.Equals(cliente.Estado, "activo", StringComparison.OrdinalIgnoreCase);
 
         var opciones = opcionesBase
+            .OrderByDescending(x => IsAccessSpecific(x.TipoProductoBaseCodigo, x.BloqueHorarioComercialId))
+            .ThenBy(x => x.FechaTermino)
+            .ThenBy(x => GetRemainingUsesSortValue(x.AccesoIlimitado, x.UsosTotales, x.UsosConsumidos))
+            .ThenBy(x => x.CreatedAt)
             .Select(option =>
             {
-                if (option.ClaseId.HasValue)
-                {
-                    var asistenciaYaRegistradaHoy = beneficiosConAsistenciaHoy.Contains(option.BeneficioClienteId);
-                    return new AccessOptionDto(
-                        option.BeneficioClienteId,
-                        option.ProductoNombre,
-                        option.Estado,
-                        option.FechaInicio,
-                        option.FechaTermino,
-                        option.UsosTotales,
-                        option.UsosConsumidos,
-                        !asistenciaYaRegistradaHoy,
-                        false,
-                        true,
-                        asistenciaYaRegistradaHoy ? "La asistencia de clase ya fue registrada hoy." : null);
-                }
-
                 var yaValidadoHoy = beneficiosValidadosHoy.Contains(option.BeneficioClienteId);
-                var dentroBloqueHorario = option.BloqueHorarioComercialId.HasValue
-                    && bloques.TryGetValue(option.BloqueHorarioComercialId.Value, out var bloque)
-                    && bloque.HoraInicio <= currentTime
-                    && currentTime <= bloque.HoraFin;
-
-                string? motivoNoValidable = null;
-                if (!option.BloqueHorarioComercialId.HasValue || !bloques.ContainsKey(option.BloqueHorarioComercialId.Value))
-                {
-                    motivoNoValidable = "El beneficio no tiene bloque horario configurado.";
-                }
-                else if (!dentroBloqueHorario)
-                {
-                    motivoNoValidable = "Fuera del bloque horario autorizado.";
-                }
-
-                if (yaValidadoHoy)
-                {
-                    motivoNoValidable = "Este beneficio ya fue validado hoy.";
-                }
+                var dentroBloqueHorario = IsWithinCommercialBlock(option.TipoProductoBaseCodigo, option.BloqueHorarioComercialId, chileTime.CurrentTimeLocal, bloques);
+                var motivoNoValidable = GetAccessValidationError(
+                    clienteActivo,
+                    option.TipoProductoBaseCodigo,
+                    option.Estado,
+                    option.FechaInicio,
+                    option.FechaTermino,
+                    option.AccesoIlimitado,
+                    option.UsosTotales,
+                    option.UsosConsumidos,
+                    option.BloqueHorarioComercialId,
+                    yaValidadoHoy,
+                    chileTime.TodayLocal,
+                    chileTime.CurrentTimeLocal,
+                    bloques);
 
                 return new AccessOptionDto(
                     option.BeneficioClienteId,
@@ -187,7 +176,7 @@ public sealed class OperacionService : ServiceBase, IOperacionService
     {
         var empresaId = GetRequiredEmpresaId();
         var usuarioId = GetRequiredUserId();
-        var (_, today, currentTime, startOfDayUtc, endOfDayUtc) = GetChileAccessTimeContext();
+        var chileTime = GetChileTimeContext();
 
         var cliente = await DbContext.ClientesEmpresa
             .AsNoTracking()
@@ -195,98 +184,45 @@ public sealed class OperacionService : ServiceBase, IOperacionService
             .FirstOrDefaultAsync(x => x.EmpresaId == empresaId && x.ClienteEmpresaId == request.ClienteEmpresaId, cancellationToken)
             ?? throw new InvalidOperationException("Cliente no encontrado.");
 
-        var beneficio = await DbContext.BeneficiosCliente
-            .FirstOrDefaultAsync(x => x.EmpresaId == empresaId && x.ClienteEmpresaId == request.ClienteEmpresaId && x.BeneficioClienteId == request.BeneficioClienteId, cancellationToken)
+        await using var transaction = await DbContext.Database.BeginTransactionAsync(cancellationToken);
+
+        var beneficio = await GetLockedBenefitAsync(empresaId, request.ClienteEmpresaId, request.BeneficioClienteId, cancellationToken)
             ?? throw new InvalidOperationException("Beneficio no encontrado.");
 
         var producto = await DbContext.ProductosEmpresa
+            .AsNoTracking()
             .Include(x => x.TipoProductoBase)
-            .FirstAsync(x => x.ProductoEmpresaId == beneficio.ProductoEmpresaId, cancellationToken);
+            .FirstAsync(x => x.EmpresaId == empresaId && x.ProductoEmpresaId == beneficio.ProductoEmpresaId, cancellationToken);
 
-        var autorizado = true;
-        string mensaje = "Acceso autorizado.";
+        var bloques = await GetActiveCommercialBlocksByIdsAsync(
+            empresaId,
+            beneficio.BloqueHorarioComercialId.HasValue ? [beneficio.BloqueHorarioComercialId.Value] : [],
+            cancellationToken);
 
-        if (!string.Equals(cliente.Estado, "activo", StringComparison.OrdinalIgnoreCase))
-        {
-            autorizado = false;
-            mensaje = "El cliente no está activo.";
-        }
-        else if (beneficio.Estado == "anulado" || beneficio.FechaInicio > today || today > beneficio.FechaTermino)
-        {
-            autorizado = false;
-            mensaje = "El beneficio no está vigente.";
-        }
-        else if (!beneficio.AccesoIlimitado && beneficio.UsosTotales.HasValue && beneficio.UsosConsumidos >= beneficio.UsosTotales.Value)
-        {
-            autorizado = false;
-            mensaje = "El beneficio ya no tiene saldo disponible.";
-        }
+        var yaValidadoHoy = await HasAuthorizedAccessTodayAsync(
+            empresaId,
+            request.ClienteEmpresaId,
+            beneficio.BeneficioClienteId,
+            chileTime.StartOfDayUtc,
+            chileTime.EndOfDayUtc,
+            cancellationToken);
 
-        if (autorizado && beneficio.ClaseId.HasValue)
-        {
-            var asistenciaYaRegistradaHoy = await DbContext.ClaseAsistencias
-                .AsNoTracking()
-                .Join(DbContext.ClaseSesiones.AsNoTracking(), a => a.ClaseSesionId, s => s.ClaseSesionId, (asistencia, sesion) => new { asistencia, sesion })
-                .AnyAsync(x => x.sesion.EmpresaId == empresaId
-                    && x.sesion.Fecha == today
-                    && x.asistencia.ClienteEmpresaId == request.ClienteEmpresaId
-                    && x.asistencia.BeneficioClienteId == beneficio.BeneficioClienteId,
-                    cancellationToken);
+        var mensaje = GetAccessValidationError(
+            string.Equals(cliente.Estado, "activo", StringComparison.OrdinalIgnoreCase),
+            producto.TipoProductoBase.Codigo,
+            beneficio.Estado,
+            beneficio.FechaInicio,
+            beneficio.FechaTermino,
+            beneficio.AccesoIlimitado,
+            beneficio.UsosTotales,
+            beneficio.UsosConsumidos,
+            beneficio.BloqueHorarioComercialId,
+            yaValidadoHoy,
+            chileTime.TodayLocal,
+            chileTime.CurrentTimeLocal,
+            bloques);
 
-            if (asistenciaYaRegistradaHoy)
-            {
-                autorizado = false;
-                mensaje = "La asistencia de clase ya fue registrada hoy.";
-            }
-        }
-
-        if (autorizado && !beneficio.ClaseId.HasValue)
-        {
-            if (!beneficio.BloqueHorarioComercialId.HasValue)
-            {
-                autorizado = false;
-                mensaje = "El beneficio no tiene bloque horario configurado.";
-            }
-            else
-            {
-                var bloque = await DbContext.BloquesHorariosComerciales
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(x => x.BloqueHorarioComercialId == beneficio.BloqueHorarioComercialId.Value, cancellationToken);
-
-                if (bloque is null)
-                {
-                    autorizado = false;
-                    mensaje = "El beneficio no tiene bloque horario configurado.";
-                }
-                else if (currentTime < bloque.HoraInicio || currentTime > bloque.HoraFin)
-                {
-                    autorizado = false;
-                    mensaje = "Fuera del bloque horario autorizado.";
-                }
-            }
-        }
-
-        if (autorizado && !beneficio.ClaseId.HasValue)
-        {
-            var accesoAutorizadoHoy = await DbContext.AccesoEventos
-                .AsNoTracking()
-                .AnyAsync(x =>
-                    x.EmpresaId == empresaId
-                    && x.ClienteEmpresaId == request.ClienteEmpresaId
-                    && x.BeneficioClienteId == beneficio.BeneficioClienteId
-                    && x.Resultado == "autorizado"
-                    && x.FechaHora >= startOfDayUtc
-                    && x.FechaHora < endOfDayUtc,
-                    cancellationToken);
-
-            if (accesoAutorizadoHoy)
-            {
-                autorizado = false;
-                mensaje = "Este beneficio ya fue validado hoy.";
-            }
-        }
-
-        if (!autorizado)
+        if (mensaje is not null)
         {
             return new AccessValidationResultDto(false, mensaje, null, beneficio.BeneficioClienteId, producto.NombreComercial);
         }
@@ -300,77 +236,29 @@ public sealed class OperacionService : ServiceBase, IOperacionService
             UsuarioValidadorId = usuarioId,
             FechaHora = DateTimeOffset.UtcNow,
             Resultado = "autorizado",
-            MotivoRechazo = null
+            MotivoRechazo = null,
         };
 
         DbContext.AccesoEventos.Add(evento);
 
-        if (producto.TipoProductoBase.Codigo != ProductBaseCodes.Clases)
+        beneficio.UsosConsumidos += 1;
+        beneficio.UpdatedAt = DateTimeOffset.UtcNow;
+
+        if (!beneficio.AccesoIlimitado && beneficio.UsosTotales.HasValue && beneficio.UsosConsumidos >= beneficio.UsosTotales.Value)
         {
-            beneficio.UsosConsumidos += 1;
-            beneficio.UpdatedAt = DateTimeOffset.UtcNow;
-            if (beneficio.UsosTotales.HasValue && beneficio.UsosConsumidos >= beneficio.UsosTotales.Value)
-            {
-                beneficio.Estado = "consumido";
-            }
+            beneficio.Estado = "consumido";
         }
 
         await DbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
-        return new AccessValidationResultDto(true, mensaje, evento.AccesoEventoId, beneficio.BeneficioClienteId, producto.NombreComercial);
-    }
-
-    private static TimeZoneInfo GetChileTimeZone()
-    {
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById("America/Santiago");
-        }
-        catch (TimeZoneNotFoundException)
-        {
-            try
-            {
-                return TimeZoneInfo.FindSystemTimeZoneById("Pacific SA Standard Time");
-            }
-            catch (TimeZoneNotFoundException)
-            {
-                throw new InvalidOperationException("No se encontró la zona horaria de Chile en el sistema.");
-            }
-            catch (InvalidTimeZoneException)
-            {
-                throw new InvalidOperationException("La zona horaria de Chile es inválida en el sistema.");
-            }
-        }
-        catch (InvalidTimeZoneException)
-        {
-            throw new InvalidOperationException("La zona horaria de Chile es inválida en el sistema.");
-        }
-    }
-
-    private static (DateTimeOffset NowLocal, DateOnly TodayLocal, TimeOnly CurrentTimeLocal, DateTimeOffset StartOfDayUtc, DateTimeOffset EndOfDayUtc) GetChileAccessTimeContext()
-    {
-        var chileTimeZone = GetChileTimeZone();
-        var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, chileTimeZone);
-
-        var localDate = nowLocal.Date;
-        var startOfDayLocal = DateTime.SpecifyKind(localDate, DateTimeKind.Unspecified);
-        var endOfDayLocal = startOfDayLocal.AddDays(1);
-
-        var startOfDayUtc = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(startOfDayLocal, chileTimeZone), TimeSpan.Zero);
-        var endOfDayUtc = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(endOfDayLocal, chileTimeZone), TimeSpan.Zero);
-
-        return (
-            nowLocal,
-            DateOnly.FromDateTime(nowLocal.DateTime),
-            TimeOnly.FromDateTime(nowLocal.DateTime),
-            startOfDayUtc,
-            endOfDayUtc);
+        return new AccessValidationResultDto(true, "Acceso autorizado.", evento.AccesoEventoId, beneficio.BeneficioClienteId, producto.NombreComercial);
     }
 
     public async Task<IReadOnlyCollection<ClaseSesionDto>> GetSesionesAsync(DateOnly? fecha, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
-        var targetDate = fecha ?? DateOnly.FromDateTime(DateTime.UtcNow.Date);
+        var targetDate = fecha ?? GetChileTimeContext().TodayLocal;
 
         await EnsureSessionsForDateAsync(empresaId, targetDate, cancellationToken);
 
@@ -402,14 +290,23 @@ public sealed class OperacionService : ServiceBase, IOperacionService
 
         var candidatos = await DbContext.BeneficiosCliente
             .AsNoTracking()
-            .Join(DbContext.ClientesEmpresa.AsNoTracking().Include(x => x.Persona), beneficio => beneficio.ClienteEmpresaId, cliente => cliente.ClienteEmpresaId, (beneficio, cliente) => new { beneficio, cliente })
-            .Join(DbContext.ProductosEmpresa.AsNoTracking(), x => x.beneficio.ProductoEmpresaId, producto => producto.ProductoEmpresaId, (x, producto) => new { x.beneficio, x.cliente, producto })
-            .Where(x => x.beneficio.EmpresaId == empresaId
-                && x.beneficio.ClaseId == sesion.ClaseId
-                && x.beneficio.Estado != "anulado"
-                && x.beneficio.FechaInicio <= sesion.Fecha
-                && sesion.Fecha <= x.beneficio.FechaTermino
-                && (x.beneficio.AccesoIlimitado || !x.beneficio.UsosTotales.HasValue || x.beneficio.UsosConsumidos < x.beneficio.UsosTotales.Value))
+            .Where(beneficio => beneficio.EmpresaId == empresaId
+                && beneficio.ClaseId == sesion.ClaseId
+                && beneficio.Estado == "vigente"
+                && beneficio.FechaInicio <= sesion.Fecha
+                && sesion.Fecha <= beneficio.FechaTermino
+                && (beneficio.AccesoIlimitado || beneficio.UsosTotales.HasValue && beneficio.UsosConsumidos < beneficio.UsosTotales.Value))
+            .Join(
+                DbContext.ClientesEmpresa.AsNoTracking().Include(x => x.Persona),
+                beneficio => beneficio.ClienteEmpresaId,
+                cliente => cliente.ClienteEmpresaId,
+                (beneficio, cliente) => new { beneficio, cliente })
+            .Join(
+                DbContext.ProductosEmpresa.AsNoTracking().Include(x => x.TipoProductoBase),
+                x => x.beneficio.ProductoEmpresaId,
+                producto => producto.ProductoEmpresaId,
+                (x, producto) => new { x.beneficio, x.cliente, producto })
+            .Where(x => x.producto.TipoProductoBase.Codigo == ProductBaseCodes.Clases)
             .Select(x => new
             {
                 x.beneficio.ClienteEmpresaId,
@@ -421,7 +318,8 @@ public sealed class OperacionService : ServiceBase, IOperacionService
                 x.beneficio.UsosTotales,
                 x.beneficio.UsosConsumidos,
                 x.beneficio.AccesoIlimitado,
-                x.beneficio.FechaTermino
+                x.beneficio.FechaTermino,
+                x.beneficio.CreatedAt,
             })
             .ToListAsync(cancellationToken);
 
@@ -429,7 +327,8 @@ public sealed class OperacionService : ServiceBase, IOperacionService
             .GroupBy(x => x.ClienteEmpresaId)
             .Select(group => group
                 .OrderBy(x => x.FechaTermino)
-                .ThenBy(x => x.BeneficioClienteId)
+                .ThenBy(x => GetRemainingUsesSortValue(x.AccesoIlimitado, x.UsosTotales, x.UsosConsumidos))
+                .ThenBy(x => x.CreatedAt)
                 .First())
             .OrderBy(x => x.ClienteNombre)
             .Select(x => new ClaseSesionInscritoDto(
@@ -449,36 +348,45 @@ public sealed class OperacionService : ServiceBase, IOperacionService
     public async Task<ClaseAsistenciaDto> RegistrarAsistenciaAsync(RegisterAttendanceRequestDto request, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();
+        var chileTime = GetChileTimeContext();
 
-        var sesion = await DbContext.ClaseSesiones.FirstOrDefaultAsync(x => x.EmpresaId == empresaId && x.ClaseSesionId == request.ClaseSesionId, cancellationToken)
+        var sesion = await DbContext.ClaseSesiones
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.EmpresaId == empresaId && x.ClaseSesionId == request.ClaseSesionId, cancellationToken)
             ?? throw new InvalidOperationException("Sesión no encontrada.");
 
-        var beneficio = await DbContext.BeneficiosCliente.FirstOrDefaultAsync(x =>
-            x.EmpresaId == empresaId
-            && x.ClienteEmpresaId == request.ClienteEmpresaId
-            && x.BeneficioClienteId == request.BeneficioClienteId,
-            cancellationToken)
+        var horariosActivos = await DbContext.ClaseHorarios
+            .AsNoTracking()
+            .Where(x => x.ClaseId == sesion.ClaseId && x.Activo && x.DiaSemana == chileTime.CurrentDayOfWeek)
+            .Select(x => new ClassScheduleWindow(x.HoraInicio, x.HoraFin))
+            .ToListAsync(cancellationToken);
+
+        await using var transaction = await DbContext.Database.BeginTransactionAsync(cancellationToken);
+
+        var beneficio = await GetLockedBenefitAsync(empresaId, request.ClienteEmpresaId, request.BeneficioClienteId, cancellationToken)
             ?? throw new InvalidOperationException("Beneficio no encontrado.");
 
-        if (beneficio.ClaseId != sesion.ClaseId)
-        {
-            throw new InvalidOperationException("El beneficio no corresponde a la clase indicada.");
-        }
+        var tipoProductoBaseCodigo = await DbContext.TiposProductoBase
+            .AsNoTracking()
+            .Where(x => x.TipoProductoBaseId == beneficio.TipoProductoBaseId)
+            .Select(x => x.Codigo)
+            .FirstAsync(cancellationToken);
 
-        if (sesion.Fecha < beneficio.FechaInicio || sesion.Fecha > beneficio.FechaTermino)
-        {
-            throw new InvalidOperationException("La vigencia del beneficio no cubre la sesión.");
-        }
+        var asistenciaYaRegistrada = await DbContext.ClaseAsistencias
+            .AsNoTracking()
+            .AnyAsync(x => x.ClaseSesionId == request.ClaseSesionId && x.ClienteEmpresaId == request.ClienteEmpresaId, cancellationToken);
 
-        if (beneficio.UsosTotales.HasValue && beneficio.UsosConsumidos >= beneficio.UsosTotales.Value)
-        {
-            throw new InvalidOperationException("El beneficio ya no tiene clases disponibles.");
-        }
+        var mensaje = GetAttendanceValidationError(
+            tipoProductoBaseCodigo,
+            sesion,
+            beneficio,
+            chileTime,
+            horariosActivos,
+            asistenciaYaRegistrada);
 
-        var exists = await DbContext.ClaseAsistencias.AnyAsync(x => x.ClaseSesionId == request.ClaseSesionId && x.ClienteEmpresaId == request.ClienteEmpresaId, cancellationToken);
-        if (exists)
+        if (mensaje is not null)
         {
-            throw new InvalidOperationException("La asistencia ya fue registrada.");
+            throw new InvalidOperationException(mensaje);
         }
 
         var asistencia = new Domain.Entities.Operacion.ClaseAsistencia
@@ -488,36 +396,279 @@ public sealed class OperacionService : ServiceBase, IOperacionService
             BeneficioClienteId = request.BeneficioClienteId,
             UsuarioRegistroId = GetRequiredUserId(),
             FechaHoraRegistro = DateTimeOffset.UtcNow,
-            Estado = "asistio"
+            Estado = "asistio",
         };
 
         DbContext.ClaseAsistencias.Add(asistencia);
 
         beneficio.UsosConsumidos += 1;
         beneficio.UpdatedAt = DateTimeOffset.UtcNow;
-        if (beneficio.UsosTotales.HasValue && beneficio.UsosConsumidos >= beneficio.UsosTotales.Value)
+
+        if (!beneficio.AccesoIlimitado && beneficio.UsosTotales.HasValue && beneficio.UsosConsumidos >= beneficio.UsosTotales.Value)
         {
             beneficio.Estado = "consumido";
         }
 
-        await DbContext.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await DbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception) when (exception.InnerException is PostgresException postgresException
+            && postgresException.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            throw new InvalidOperationException("La asistencia ya fue registrada.");
+        }
+
         await AuditAsync("clase_asistencia", asistencia.ClaseAsistenciaId, "crear", request, empresaId, cancellationToken);
 
         return new ClaseAsistenciaDto(asistencia.ClaseAsistenciaId, asistencia.ClaseSesionId, asistencia.ClienteEmpresaId, asistencia.Estado, asistencia.FechaHoraRegistro);
     }
 
+    private async Task<BeneficioCliente?> GetLockedBenefitAsync(long empresaId, long clienteEmpresaId, long beneficioClienteId, CancellationToken cancellationToken)
+    {
+        return await DbContext.BeneficiosCliente
+            .FromSqlInterpolated($@"
+                select *
+                from ventas.beneficio_cliente
+                where empresa_id = {empresaId}
+                  and cliente_empresa_id = {clienteEmpresaId}
+                  and beneficio_cliente_id = {beneficioClienteId}
+                for update")
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private async Task<Dictionary<long, CommercialBlockWindow>> GetActiveCommercialBlocksByIdsAsync(long empresaId, IEnumerable<long> blockIds, CancellationToken cancellationToken)
+    {
+        var ids = blockIds.Distinct().ToArray();
+        if (ids.Length == 0)
+        {
+            return new Dictionary<long, CommercialBlockWindow>();
+        }
+
+        return await DbContext.BloquesHorariosComerciales
+            .AsNoTracking()
+            .Where(x => x.EmpresaId == empresaId && x.Activo && ids.Contains(x.BloqueHorarioComercialId))
+            .Select(x => new { x.BloqueHorarioComercialId, x.HoraInicio, x.HoraFin })
+            .ToDictionaryAsync(
+                x => x.BloqueHorarioComercialId,
+                x => new CommercialBlockWindow(x.HoraInicio, x.HoraFin),
+                cancellationToken);
+    }
+
+    private async Task<bool> HasAuthorizedAccessTodayAsync(
+        long empresaId,
+        long clienteEmpresaId,
+        long beneficioClienteId,
+        DateTimeOffset startOfDayUtc,
+        DateTimeOffset endOfDayUtc,
+        CancellationToken cancellationToken)
+    {
+        return await DbContext.AccesoEventos
+            .AsNoTracking()
+            .AnyAsync(x =>
+                x.EmpresaId == empresaId
+                && x.ClienteEmpresaId == clienteEmpresaId
+                && x.BeneficioClienteId == beneficioClienteId
+                && x.Resultado == "autorizado"
+                && x.FechaHora >= startOfDayUtc
+                && x.FechaHora < endOfDayUtc,
+                cancellationToken);
+    }
+
+    private static bool IsAccessGeneralProduct(string? tipoProductoBaseCodigo)
+    {
+        return string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.TicketIndividual, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.PackTickets, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.MensualidadPorHorario, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.MensualidadTodoHorario, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasUsageAvailable(bool accesoIlimitado, int? usosTotales, int usosConsumidos)
+    {
+        return accesoIlimitado || usosTotales.HasValue && usosConsumidos < usosTotales.Value;
+    }
+
+    private static bool IsAccessSpecific(string tipoProductoBaseCodigo, long? bloqueHorarioComercialId)
+    {
+        return string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.TicketIndividual, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.MensualidadPorHorario, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.PackTickets, StringComparison.OrdinalIgnoreCase) && bloqueHorarioComercialId.HasValue;
+    }
+
+    private static int GetRemainingUsesSortValue(bool accesoIlimitado, int? usosTotales, int usosConsumidos)
+    {
+        if (accesoIlimitado || !usosTotales.HasValue)
+        {
+            return int.MaxValue;
+        }
+
+        return Math.Max(usosTotales.Value - usosConsumidos, 0);
+    }
+
+    private static bool IsWithinCommercialBlock(
+        string tipoProductoBaseCodigo,
+        long? bloqueHorarioComercialId,
+        TimeOnly currentTime,
+        IReadOnlyDictionary<long, CommercialBlockWindow> activeBlocks)
+    {
+        return GetCommercialBlockValidationError(tipoProductoBaseCodigo, bloqueHorarioComercialId, currentTime, activeBlocks) is null;
+    }
+
+    private static string? GetCommercialBlockValidationError(
+        string tipoProductoBaseCodigo,
+        long? bloqueHorarioComercialId,
+        TimeOnly currentTime,
+        IReadOnlyDictionary<long, CommercialBlockWindow> activeBlocks)
+    {
+        if (string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.MensualidadTodoHorario, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var requiresBlock = string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.TicketIndividual, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.MensualidadPorHorario, StringComparison.OrdinalIgnoreCase);
+
+        var validatesWhenConfigured = requiresBlock
+            || string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.PackTickets, StringComparison.OrdinalIgnoreCase) && bloqueHorarioComercialId.HasValue;
+
+        if (!validatesWhenConfigured)
+        {
+            return null;
+        }
+
+        if (!bloqueHorarioComercialId.HasValue || !activeBlocks.TryGetValue(bloqueHorarioComercialId.Value, out var block))
+        {
+            return "Bloque horario no válido.";
+        }
+
+        if (currentTime < block.HoraInicio || currentTime > block.HoraFin)
+        {
+            return "Horario no permitido.";
+        }
+
+        return null;
+    }
+
+    private static string? GetAccessValidationError(
+        bool clienteActivo,
+        string tipoProductoBaseCodigo,
+        string estado,
+        DateOnly fechaInicio,
+        DateOnly fechaTermino,
+        bool accesoIlimitado,
+        int? usosTotales,
+        int usosConsumidos,
+        long? bloqueHorarioComercialId,
+        bool yaValidadoHoy,
+        DateOnly today,
+        TimeOnly currentTime,
+        IReadOnlyDictionary<long, CommercialBlockWindow> activeBlocks)
+    {
+        if (!clienteActivo)
+        {
+            return "El cliente no está activo.";
+        }
+
+        if (!IsAccessGeneralProduct(tipoProductoBaseCodigo))
+        {
+            return "El beneficio no aplica para acceso general.";
+        }
+
+        if (!string.Equals(estado, "vigente", StringComparison.OrdinalIgnoreCase))
+        {
+            return "El beneficio no está vigente.";
+        }
+
+        if (fechaInicio > today || today > fechaTermino)
+        {
+            return "El beneficio está fuera de fecha.";
+        }
+
+        if (!HasUsageAvailable(accesoIlimitado, usosTotales, usosConsumidos))
+        {
+            return "El beneficio no tiene usos disponibles.";
+        }
+
+        if (yaValidadoHoy)
+        {
+            return "Este beneficio ya fue validado hoy.";
+        }
+
+        return GetCommercialBlockValidationError(tipoProductoBaseCodigo, bloqueHorarioComercialId, currentTime, activeBlocks);
+    }
+
+    private static string? GetAttendanceValidationError(
+        string tipoProductoBaseCodigo,
+        Domain.Entities.Operacion.ClaseSesion sesion,
+        BeneficioCliente beneficio,
+        ChileTimeContext chileTime,
+        IReadOnlyCollection<ClassScheduleWindow> horariosActivos,
+        bool asistenciaYaRegistrada)
+    {
+        if (sesion.Fecha != chileTime.TodayLocal)
+        {
+            return "La asistencia solo puede registrarse para sesiones del día actual.";
+        }
+
+        if (asistenciaYaRegistrada)
+        {
+            return "La asistencia ya fue registrada.";
+        }
+
+        if (!string.Equals(tipoProductoBaseCodigo, ProductBaseCodes.Clases, StringComparison.OrdinalIgnoreCase))
+        {
+            return "El beneficio no corresponde a la clase indicada.";
+        }
+
+        if (!string.Equals(beneficio.Estado, "vigente", StringComparison.OrdinalIgnoreCase))
+        {
+            return "El beneficio no está vigente.";
+        }
+
+        if (beneficio.FechaInicio > chileTime.TodayLocal || chileTime.TodayLocal > beneficio.FechaTermino)
+        {
+            return "La vigencia del beneficio no cubre la sesión.";
+        }
+
+        if (!HasUsageAvailable(beneficio.AccesoIlimitado, beneficio.UsosTotales, beneficio.UsosConsumidos))
+        {
+            return "El beneficio ya no tiene clases disponibles.";
+        }
+
+        if (beneficio.ClaseId != sesion.ClaseId)
+        {
+            return "El beneficio no corresponde a la clase indicada.";
+        }
+
+        if (horariosActivos.Count == 0)
+        {
+            return "La clase no tiene horario activo para el día actual.";
+        }
+
+        var withinWindow = horariosActivos.Any(h => IsWithinAttendanceWindow(chileTime.CurrentTimeLocal, h.HoraInicio, h.HoraFin));
+        if (!withinWindow)
+        {
+            return "La validación está fuera de la ventana horaria permitida.";
+        }
+
+        return null;
+    }
+
+    private static bool IsWithinAttendanceWindow(TimeOnly currentTime, TimeOnly horaInicio, TimeOnly horaFin)
+    {
+        var startTicks = Math.Max(0, horaInicio.Ticks - TimeSpan.FromHours(1).Ticks);
+        var endTicks = Math.Min(TimeOnly.MaxValue.Ticks, horaFin.Ticks + TimeSpan.FromHours(1).Ticks);
+
+        var startWindow = TimeOnly.FromTimeSpan(TimeSpan.FromTicks(startTicks));
+        var endWindow = TimeOnly.FromTimeSpan(TimeSpan.FromTicks(endTicks));
+
+        return currentTime >= startWindow && currentTime <= endWindow;
+    }
+
     private async Task EnsureSessionsForDateAsync(long empresaId, DateOnly targetDate, CancellationToken cancellationToken)
     {
-        var dayOfWeek = targetDate.DayOfWeek switch
-        {
-            DayOfWeek.Monday => (short)1,
-            DayOfWeek.Tuesday => (short)2,
-            DayOfWeek.Wednesday => (short)3,
-            DayOfWeek.Thursday => (short)4,
-            DayOfWeek.Friday => (short)5,
-            DayOfWeek.Saturday => (short)6,
-            _ => (short)7
-        };
+        var dayOfWeek = GetDayOfWeekNumber(targetDate);
 
         var clases = await DbContext.Clases
             .Include(x => x.Horarios)
@@ -550,7 +701,7 @@ public sealed class OperacionService : ServiceBase, IOperacionService
                     ProfesorEmpresaId = clase.ProfesorEmpresaId,
                     CupoMaximo = clase.CupoMaximo,
                     Estado = "programada",
-                    CreatedAt = DateTimeOffset.UtcNow
+                    CreatedAt = DateTimeOffset.UtcNow,
                 });
 
                 hasChanges = true;

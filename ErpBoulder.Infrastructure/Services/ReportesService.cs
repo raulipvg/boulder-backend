@@ -17,13 +17,13 @@ public sealed class ReportesService : ServiceBase, IReportesService
     public async Task<DashboardReportDto> GetDashboardAsync(CancellationToken cancellationToken)
     {
         var empresaId = GetOptionalEmpresaId();
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var todayDateTime = DateTime.SpecifyKind(DateTime.UtcNow.Date, DateTimeKind.Utc);
+        var chileTime = GetChileTimeContext();
+        var today = chileTime.TodayLocal;
 
         var ventasQuery = DbContext.Ventas.Where(x => x.Estado == "emitida");
         var clientesQuery = DbContext.ClientesEmpresa.Where(x => x.Estado == "activo");
         var beneficiosQuery = DbContext.BeneficiosCliente.Where(x => x.Estado == "vigente" && x.FechaInicio <= today && today <= x.FechaTermino);
-        var accesosHoyQuery = DbContext.AccesoEventos.Where(x => x.Resultado == "autorizado" && x.FechaHora >= todayDateTime && x.FechaHora < todayDateTime.AddDays(1));
+        var accesosHoyQuery = DbContext.AccesoEventos.Where(x => x.Resultado == "autorizado" && x.FechaHora >= chileTime.StartOfDayUtc && x.FechaHora < chileTime.EndOfDayUtc);
 
         if (empresaId.HasValue)
         {

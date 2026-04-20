@@ -11,9 +11,83 @@ using Microsoft.EntityFrameworkCore;
 public abstract class ServiceBase(ErpBoulderDbContext dbContext, ICurrentUserContext currentUser)
 {
     protected static readonly string[] TipoDiaOrder = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"];
+    protected sealed record ChileTimeContext(
+        DateTimeOffset NowLocal,
+        DateOnly TodayLocal,
+        TimeOnly CurrentTimeLocal,
+        short CurrentDayOfWeek,
+        DateTimeOffset StartOfDayUtc,
+        DateTimeOffset EndOfDayUtc);
 
     protected ErpBoulderDbContext DbContext { get; } = dbContext;
     protected ICurrentUserContext CurrentUser { get; } = currentUser;
+
+    protected static TimeZoneInfo GetChileTimeZone()
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById("America/Santiago");
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById("Pacific SA Standard Time");
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                throw new InvalidOperationException("No se encontró la zona horaria de Chile en el sistema.");
+            }
+            catch (InvalidTimeZoneException)
+            {
+                throw new InvalidOperationException("La zona horaria de Chile es inválida en el sistema.");
+            }
+        }
+        catch (InvalidTimeZoneException)
+        {
+            throw new InvalidOperationException("La zona horaria de Chile es inválida en el sistema.");
+        }
+    }
+
+    protected static ChileTimeContext GetChileTimeContext()
+    {
+        var chileTimeZone = GetChileTimeZone();
+        var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, chileTimeZone);
+
+        var localDate = nowLocal.Date;
+        var startOfDayLocal = DateTime.SpecifyKind(localDate, DateTimeKind.Unspecified);
+        var endOfDayLocal = startOfDayLocal.AddDays(1);
+
+        var startOfDayUtc = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(startOfDayLocal, chileTimeZone), TimeSpan.Zero);
+        var endOfDayUtc = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(endOfDayLocal, chileTimeZone), TimeSpan.Zero);
+
+        return new ChileTimeContext(
+            nowLocal,
+            DateOnly.FromDateTime(nowLocal.DateTime),
+            TimeOnly.FromDateTime(nowLocal.DateTime),
+            GetDayOfWeekNumber(nowLocal.DayOfWeek),
+            startOfDayUtc,
+            endOfDayUtc);
+    }
+
+    protected static short GetDayOfWeekNumber(DateOnly date)
+    {
+        return GetDayOfWeekNumber(date.DayOfWeek);
+    }
+
+    protected static short GetDayOfWeekNumber(DayOfWeek dayOfWeek)
+    {
+        return dayOfWeek switch
+        {
+            DayOfWeek.Monday => (short)1,
+            DayOfWeek.Tuesday => (short)2,
+            DayOfWeek.Wednesday => (short)3,
+            DayOfWeek.Thursday => (short)4,
+            DayOfWeek.Friday => (short)5,
+            DayOfWeek.Saturday => (short)6,
+            _ => (short)7,
+        };
+    }
 
     protected long GetRequiredUserId()
     {
@@ -119,6 +193,6 @@ public abstract class ServiceBase(ErpBoulderDbContext dbContext, ICurrentUserCon
 
     protected string GenerateComprobanteNumber()
     {
-        return $"V-{DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(-4)).ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture)}-{Random.Shared.Next(1000, 9999)}";
+        return $"V-{GetChileTimeContext().NowLocal.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture)}-{Random.Shared.Next(1000, 9999)}";
     }
 }

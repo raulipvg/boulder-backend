@@ -199,9 +199,9 @@ public sealed class VentasService : ServiceBase, IVentasService
 
     private async Task<TarifaContext> BuildTarifaContextAsync(long empresaId, CancellationToken cancellationToken)
     {
-        var now = DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(-4));
-        var today = DateOnly.FromDateTime(now.Date);
-        var currentTime = TimeOnly.FromDateTime(now.DateTime);
+        var chileTime = GetChileTimeContext();
+        var today = chileTime.TodayLocal;
+        var currentTime = chileTime.CurrentTimeLocal;
         var tipoDia = await GetTipoDiaAsync(today, cancellationToken);
 
         var activeBloqueIds = await DbContext.BloquesHorariosComerciales
@@ -728,7 +728,7 @@ public sealed class VentasService : ServiceBase, IVentasService
 
     private async Task<BeneficioCliente> BuildBenefitAsync(long empresaId, long clienteEmpresaId, Domain.Entities.Administracion.ProductoEmpresa producto, VentaDetalle detalle, CancellationToken cancellationToken)
     {
-        var fechaInicio = detalle.FechaInicioVigencia ?? DateOnly.FromDateTime(DateTime.UtcNow.Date);
+        var fechaInicio = detalle.FechaInicioVigencia ?? GetChileTimeContext().TodayLocal;
         var fechaTermino = producto.VigenciaDias.HasValue
             ? fechaInicio.AddDays(producto.VigenciaDias.Value - 1)
             : fechaInicio;
@@ -805,7 +805,7 @@ public sealed class VentasService : ServiceBase, IVentasService
         }
 
         var claseTipoProductoBaseId = classAssignments[0].Producto.TipoProductoBaseId;
-        var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(-4)).DateTime.Date);
+        var today = GetChileTimeContext().TodayLocal;
 
         var clientesConClaseVigente = await DbContext.BeneficiosCliente
             .AsNoTracking()
