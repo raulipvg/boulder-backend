@@ -11,32 +11,32 @@ using Microsoft.AspNetCore.Mvc;
 public sealed class ReportesController(IReportesService reportesService) : ControllerBase
 {
     [HttpGet("dashboard")]
-    public async Task<ActionResult<DashboardReportDto>> Dashboard(CancellationToken cancellationToken)
+    public async Task<ActionResult<DashboardReportDto>> Dashboard([FromQuery] string? periodo, [FromQuery] DateOnly? fechaReferencia, CancellationToken cancellationToken)
     {
-        return Ok(await reportesService.GetDashboardAsync(cancellationToken));
+        return Ok(await reportesService.GetDashboardAsync(periodo, fechaReferencia, cancellationToken));
     }
 
     [HttpGet("ventas/producto")]
-    public async Task<ActionResult<IReadOnlyCollection<SimpleReportItemDto>>> VentasPorProducto(CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyCollection<SimpleReportItemDto>>> VentasPorProducto([FromQuery] string? periodo, [FromQuery] DateOnly? fechaReferencia, CancellationToken cancellationToken)
     {
-        return Ok(await reportesService.GetVentasPorProductoAsync(cancellationToken));
+        return Ok(await reportesService.GetVentasPorProductoAsync(periodo, fechaReferencia, cancellationToken));
     }
 
     [HttpGet("ventas/tipo-cliente")]
-    public async Task<ActionResult<IReadOnlyCollection<SimpleReportItemDto>>> VentasPorTipoCliente(CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyCollection<SimpleReportItemDto>>> VentasPorTipoCliente([FromQuery] string? periodo, [FromQuery] DateOnly? fechaReferencia, CancellationToken cancellationToken)
     {
-        return Ok(await reportesService.GetVentasPorTipoClienteAsync(cancellationToken));
+        return Ok(await reportesService.GetVentasPorTipoClienteAsync(periodo, fechaReferencia, cancellationToken));
     }
 
     [HttpGet("accesos/bloque")]
-    public async Task<ActionResult<IReadOnlyCollection<SimpleReportItemDto>>> AccesosPorBloque(CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyCollection<SimpleReportItemDto>>> AccesosPorBloque([FromQuery] string? periodo, [FromQuery] DateOnly? fechaReferencia, CancellationToken cancellationToken)
     {
-        return Ok(await reportesService.GetAccesosPorBloqueAsync(cancellationToken));
+        return Ok(await reportesService.GetAccesosPorBloqueAsync(periodo, fechaReferencia, cancellationToken));
     }
 
     [HttpGet("clases/uso")]
-    public async Task<ActionResult<IReadOnlyCollection<SimpleReportItemDto>>> UsoClases(CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyCollection<SimpleReportItemDto>>> UsoClases([FromQuery] string? periodo, [FromQuery] DateOnly? fechaReferencia, CancellationToken cancellationToken)
     {
-        return Ok(await reportesService.GetUsoClasesAsync(cancellationToken));
+        return Ok(await reportesService.GetUsoClasesAsync(periodo, fechaReferencia, cancellationToken));
     }
 }
