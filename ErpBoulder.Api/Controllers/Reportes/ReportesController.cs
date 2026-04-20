@@ -39,4 +39,22 @@ public sealed class ReportesController(IReportesService reportesService) : Contr
     {
         return Ok(await reportesService.GetUsoClasesAsync(periodo, fechaReferencia, cancellationToken));
     }
+
+    [HttpGet("ventas/exportar")]
+    public async Task<ActionResult<IReadOnlyCollection<VentaReporteExportDto>>> ExportarVentas([FromQuery] string? periodo, [FromQuery] DateOnly? fechaReferencia, CancellationToken cancellationToken)
+    {
+        return Ok(await reportesService.GetVentasExportAsync(periodo, fechaReferencia, cancellationToken));
+    }
+
+    [HttpGet("accesos/exportar")]
+    public async Task<ActionResult<IReadOnlyCollection<AccesoReporteExportDto>>> ExportarAccesos([FromQuery] string? periodo, [FromQuery] DateOnly? fechaReferencia, CancellationToken cancellationToken)
+    {
+        return Ok(await reportesService.GetAccesosExportAsync(periodo, fechaReferencia, cancellationToken));
+    }
+
+    [HttpGet("clases/exportar")]
+    public async Task<ActionResult<IReadOnlyCollection<ClaseReporteExportDto>>> ExportarClases([FromQuery] string? periodo, [FromQuery] DateOnly? fechaReferencia, CancellationToken cancellationToken)
+    {
+        return Ok(await reportesService.GetClasesExportAsync(periodo, fechaReferencia, cancellationToken));
+    }
 }

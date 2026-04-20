@@ -9,4 +9,7 @@ public interface IReportesService
     Task<IReadOnlyCollection<SimpleReportItemDto>> GetVentasPorTipoClienteAsync(string? periodo, DateOnly? fechaReferencia, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<SimpleReportItemDto>> GetAccesosPorBloqueAsync(string? periodo, DateOnly? fechaReferencia, CancellationToken cancellationToken);
     Task<IReadOnlyCollection<SimpleReportItemDto>> GetUsoClasesAsync(string? periodo, DateOnly? fechaReferencia, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<VentaReporteExportDto>> GetVentasExportAsync(string? periodo, DateOnly? fechaReferencia, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<AccesoReporteExportDto>> GetAccesosExportAsync(string? periodo, DateOnly? fechaReferencia, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<ClaseReporteExportDto>> GetClasesExportAsync(string? periodo, DateOnly? fechaReferencia, CancellationToken cancellationToken);
 }

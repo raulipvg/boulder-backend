@@ -170,6 +170,134 @@ public sealed class ReportesService : ServiceBase, IReportesService
             .ToList();
     }
 
+    public async Task<IReadOnlyCollection<VentaReporteExportDto>> GetVentasExportAsync(string? periodo, DateOnly? fechaReferencia, CancellationToken cancellationToken)
+    {
+        var empresaId = GetOptionalEmpresaId();
+        var periodoContext = BuildPeriodoFiltroContext(periodo, fechaReferencia);
+
+        var query = DbContext.VentaDetalles
+            .AsNoTracking()
+            .Join(DbContext.Ventas.AsNoTracking(), d => d.VentaId, v => v.VentaId, (detalle, venta) => new { detalle, venta })
+            .Where(x => x.venta.Estado == "emitida"
+                && x.venta.FechaHora >= periodoContext.FechaInicioUtc
+                && x.venta.FechaHora < periodoContext.FechaFinUtc);
+
+        if (empresaId.HasValue)
+        {
+            query = query.Where(x => x.venta.EmpresaId == empresaId.Value);
+        }
+
+        return await query
+            .OrderByDescending(x => x.venta.FechaHora)
+            .ThenByDescending(x => x.detalle.VentaDetalleId)
+            .Select(x => new VentaReporteExportDto(
+                x.venta.VentaId,
+                x.detalle.VentaDetalleId,
+                x.venta.NumeroComprobante,
+                x.venta.FechaHora,
+                x.venta.ClienteEmpresaId.HasValue ? x.venta.ClienteEmpresa!.Persona.NombreCompleto : null,
+                x.venta.ClienteEmpresaId.HasValue ? x.venta.ClienteEmpresa!.Persona.Rut : null,
+                x.venta.ClienteEmpresaId.HasValue ? x.venta.ClienteEmpresa!.TipoCliente.Nombre : null,
+                x.venta.UsuarioVendedor.Persona.NombreCompleto,
+                x.detalle.ProductoNombreSnapshot,
+                x.detalle.Cantidad,
+                x.detalle.PrecioUnitario,
+                x.detalle.Subtotal,
+                x.venta.Total,
+                x.venta.Estado))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyCollection<AccesoReporteExportDto>> GetAccesosExportAsync(string? periodo, DateOnly? fechaReferencia, CancellationToken cancellationToken)
+    {
+        var empresaId = GetOptionalEmpresaId();
+        var periodoContext = BuildPeriodoFiltroContext(periodo, fechaReferencia);
+
+        var accesosBase = DbContext.AccesoEventos
+            .AsNoTracking()
+            .Where(x => x.Resultado == "autorizado"
+                && x.FechaHora >= periodoContext.FechaInicioUtc
+                && x.FechaHora < periodoContext.FechaFinUtc);
+
+        if (empresaId.HasValue)
+        {
+            accesosBase = accesosBase.Where(x => x.EmpresaId == empresaId.Value);
+        }
+
+        var query =
+            from acceso in accesosBase
+            join cliente in DbContext.ClientesEmpresa.AsNoTracking() on acceso.ClienteEmpresaId equals cliente.ClienteEmpresaId
+            join personaCliente in DbContext.Personas.AsNoTracking() on cliente.PersonaId equals personaCliente.PersonaId
+            join tipoCliente in DbContext.TiposCliente.AsNoTracking() on cliente.TipoClienteId equals tipoCliente.TipoClienteId
+            join usuarioValidador in DbContext.Usuarios.AsNoTracking() on acceso.UsuarioValidadorId equals usuarioValidador.UsuarioId
+            join personaValidador in DbContext.Personas.AsNoTracking() on usuarioValidador.PersonaId equals personaValidador.PersonaId
+            join beneficioRow in DbContext.BeneficiosCliente.AsNoTracking() on acceso.BeneficioClienteId equals (long?)beneficioRow.BeneficioClienteId into beneficioLeft
+            from beneficio in beneficioLeft.DefaultIfEmpty()
+            join productoDirectoRow in DbContext.ProductosEmpresa.AsNoTracking() on acceso.ProductoEmpresaId equals (long?)productoDirectoRow.ProductoEmpresaId into productoDirectoLeft
+            from productoDirecto in productoDirectoLeft.DefaultIfEmpty()
+            join productoBeneficioRow in DbContext.ProductosEmpresa.AsNoTracking() on (beneficio != null ? (long?)beneficio.ProductoEmpresaId : null) equals (long?)productoBeneficioRow.ProductoEmpresaId into productoBeneficioLeft
+            from productoBeneficio in productoBeneficioLeft.DefaultIfEmpty()
+            join bloqueRow in DbContext.BloquesHorariosComerciales.AsNoTracking() on (beneficio != null ? beneficio.BloqueHorarioComercialId : null) equals (long?)bloqueRow.BloqueHorarioComercialId into bloqueLeft
+            from bloque in bloqueLeft.DefaultIfEmpty()
+            orderby acceso.FechaHora descending, acceso.AccesoEventoId descending
+            select new AccesoReporteExportDto(
+                acceso.AccesoEventoId,
+                acceso.FechaHora,
+                acceso.Resultado,
+                acceso.MotivoRechazo,
+                personaCliente.NombreCompleto,
+                personaCliente.Rut,
+                tipoCliente.Nombre,
+                productoDirecto != null ? productoDirecto.NombreComercial : productoBeneficio != null ? productoBeneficio.NombreComercial : null,
+                bloque != null ? bloque.Nombre : null,
+                personaValidador.NombreCompleto);
+
+        return await query.ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyCollection<ClaseReporteExportDto>> GetClasesExportAsync(string? periodo, DateOnly? fechaReferencia, CancellationToken cancellationToken)
+    {
+        var empresaId = GetOptionalEmpresaId();
+        var periodoContext = BuildPeriodoFiltroContext(periodo, fechaReferencia);
+
+        var sesionesBase = DbContext.ClaseSesiones
+            .AsNoTracking()
+            .Where(x => x.Fecha >= periodoContext.FechaInicio && x.Fecha <= periodoContext.FechaFin);
+
+        if (empresaId.HasValue)
+        {
+            sesionesBase = sesionesBase.Where(x => x.EmpresaId == empresaId.Value);
+        }
+
+        var query =
+            from asistencia in DbContext.ClaseAsistencias.AsNoTracking()
+            join sesion in sesionesBase on asistencia.ClaseSesionId equals sesion.ClaseSesionId
+            join clase in DbContext.Clases.AsNoTracking() on sesion.ClaseId equals clase.ClaseId
+            join profesor in DbContext.ProfesoresEmpresa.AsNoTracking() on sesion.ProfesorEmpresaId equals profesor.ProfesorEmpresaId
+            join personaProfesor in DbContext.Personas.AsNoTracking() on profesor.PersonaId equals personaProfesor.PersonaId
+            join cliente in DbContext.ClientesEmpresa.AsNoTracking() on asistencia.ClienteEmpresaId equals cliente.ClienteEmpresaId
+            join personaCliente in DbContext.Personas.AsNoTracking() on cliente.PersonaId equals personaCliente.PersonaId
+            join tipoCliente in DbContext.TiposCliente.AsNoTracking() on cliente.TipoClienteId equals tipoCliente.TipoClienteId
+            join beneficio in DbContext.BeneficiosCliente.AsNoTracking() on asistencia.BeneficioClienteId equals beneficio.BeneficioClienteId
+            join producto in DbContext.ProductosEmpresa.AsNoTracking() on beneficio.ProductoEmpresaId equals producto.ProductoEmpresaId
+            orderby sesion.Fecha descending, sesion.HoraInicio descending, asistencia.FechaHoraRegistro descending
+            select new ClaseReporteExportDto(
+                asistencia.ClaseAsistenciaId,
+                asistencia.FechaHoraRegistro,
+                sesion.Fecha,
+                sesion.HoraInicio,
+                sesion.HoraFin,
+                clase.Nombre,
+                personaProfesor.NombreCompleto,
+                personaCliente.NombreCompleto,
+                personaCliente.Rut,
+                tipoCliente.Nombre,
+                producto.NombreComercial,
+                asistencia.Estado);
+
+        return await query.ToListAsync(cancellationToken);
+    }
+
     private static PeriodoFiltroContext BuildPeriodoFiltroContext(string? periodo, DateOnly? fechaReferencia)
     {
         var periodoNormalizado = ParsePeriodo(periodo);
