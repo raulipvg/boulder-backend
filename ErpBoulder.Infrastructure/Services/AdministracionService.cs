@@ -40,6 +40,17 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<LookupDto>> GetTiposClienteCatalogoAsync(CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+
+        return await DbContext.TiposCliente.AsNoTracking()
+            .Where(x => x.EmpresaId == empresaId)
+            .OrderBy(x => x.Nombre)
+            .Select(x => new LookupDto(x.TipoClienteId, x.Codigo, x.Nombre))
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyCollection<LookupDto>> GetMediosPagoAsync(CancellationToken cancellationToken)
     {
         return await DbContext.MediosPago.AsNoTracking()
@@ -59,6 +70,19 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             .Select(x => new LookupDto(
                 x.BloqueHorarioComercialId,
                 x.Nombre,
+                $"{x.Nombre} ({x.HoraInicio:HH\\:mm}-{x.HoraFin:HH\\:mm})"))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyCollection<IdNombreDto>> GetBloquesHorariosCatalogoLiteAsync(CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+
+        return await DbContext.BloquesHorariosComerciales.AsNoTracking()
+            .Where(x => x.EmpresaId == empresaId && x.Activo)
+            .OrderBy(x => x.HoraInicio)
+            .Select(x => new IdNombreDto(
+                x.BloqueHorarioComercialId,
                 $"{x.Nombre} ({x.HoraInicio:HH\\:mm}-{x.HoraFin:HH\\:mm})"))
             .ToListAsync(cancellationToken);
     }
@@ -588,6 +612,18 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
                 x.VigenciaDias,
                 x.UsosIncluidos,
                 x.AccesoIlimitado))
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyCollection<IdNombreDto>> GetProductosCatalogoAsync(CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+
+        return await DbContext.ProductosEmpresa
+            .AsNoTracking()
+            .Where(x => x.EmpresaId == empresaId)
+            .OrderBy(x => x.NombreComercial)
+            .Select(x => new IdNombreDto(x.ProductoEmpresaId, x.NombreComercial))
             .ToListAsync(cancellationToken);
     }
 

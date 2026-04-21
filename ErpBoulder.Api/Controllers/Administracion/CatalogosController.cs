@@ -16,6 +16,12 @@ public sealed class CatalogosController(IAdministracionService administracionSer
         return Ok(await administracionService.GetTiposProductoBaseAsync(cancellationToken));
     }
 
+    [HttpGet("tipos-cliente")]
+    public async Task<ActionResult<IReadOnlyCollection<LookupDto>>> GetTiposCliente(CancellationToken cancellationToken)
+    {
+        return Ok(await administracionService.GetTiposClienteCatalogoAsync(cancellationToken));
+    }
+
     [HttpGet("medios-pago")]
     public async Task<ActionResult<IReadOnlyCollection<LookupDto>>> GetMediosPago(CancellationToken cancellationToken)
     {
@@ -26,6 +32,18 @@ public sealed class CatalogosController(IAdministracionService administracionSer
     public async Task<ActionResult<IReadOnlyCollection<LookupDto>>> GetBloques(CancellationToken cancellationToken)
     {
         return Ok(await administracionService.GetBloquesHorariosAsync(cancellationToken));
+    }
+
+    [HttpGet("bloques-lite")]
+    public async Task<ActionResult<IReadOnlyCollection<IdNombreDto>>> GetBloquesLite(CancellationToken cancellationToken)
+    {
+        return Ok(await administracionService.GetBloquesHorariosCatalogoLiteAsync(cancellationToken));
+    }
+
+    [HttpGet("productos")]
+    public async Task<ActionResult<IReadOnlyCollection<IdNombreDto>>> GetProductos(CancellationToken cancellationToken)
+    {
+        return Ok(await administracionService.GetProductosCatalogoAsync(cancellationToken));
     }
 
     [HttpGet("profesores")]

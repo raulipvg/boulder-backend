@@ -5,8 +5,10 @@ using ErpBoulder.Application.DTOs.Administracion;
 public interface IAdministracionService
 {
     Task<IReadOnlyCollection<LookupDto>> GetTiposProductoBaseAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<LookupDto>> GetTiposClienteCatalogoAsync(CancellationToken cancellationToken);
     Task<IReadOnlyCollection<LookupDto>> GetMediosPagoAsync(CancellationToken cancellationToken);
     Task<IReadOnlyCollection<LookupDto>> GetBloquesHorariosAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<IdNombreDto>> GetBloquesHorariosCatalogoLiteAsync(CancellationToken cancellationToken);
     Task<IReadOnlyCollection<BloqueHorarioDto>> GetBloquesHorariosComercialesAsync(CancellationToken cancellationToken);
     Task<BloqueHorarioDto> CreateBloqueHorarioAsync(UpsertBloqueHorarioRequestDto request, CancellationToken cancellationToken);
     Task<BloqueHorarioDto> UpdateBloqueHorarioAsync(long bloqueHorarioComercialId, UpsertBloqueHorarioRequestDto request, CancellationToken cancellationToken);
@@ -23,6 +25,7 @@ public interface IAdministracionService
     Task<IReadOnlyCollection<ClienteDto>> GetClientesAsync(string? search, CancellationToken cancellationToken);
     Task<ClienteDto> CreateClienteAsync(UpsertClienteRequestDto request, CancellationToken cancellationToken);
     Task<ClienteDto> UpdateClienteAsync(long clienteEmpresaId, UpsertClienteRequestDto request, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<IdNombreDto>> GetProductosCatalogoAsync(CancellationToken cancellationToken);
     Task<IReadOnlyCollection<ProductoDto>> GetProductosAsync(CancellationToken cancellationToken);
     Task<ProductoDto> CreateProductoAsync(UpsertProductoRequestDto request, CancellationToken cancellationToken);
     Task<ProductoDto> UpdateProductoAsync(long productoEmpresaId, UpsertProductoRequestDto request, CancellationToken cancellationToken);
