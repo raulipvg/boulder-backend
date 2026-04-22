@@ -51,4 +51,10 @@ public sealed class CatalogosController(IAdministracionService administracionSer
     {
         return Ok(await administracionService.GetProfesoresAsync(cancellationToken));
     }
+
+    [HttpGet("clases")]
+    public async Task<ActionResult<IReadOnlyCollection<ClaseCatalogoDto>>> GetClases(CancellationToken cancellationToken)
+    {
+        return Ok(await administracionService.GetClasesCatalogoAsync(cancellationToken));
+    }
 }

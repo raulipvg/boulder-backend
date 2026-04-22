@@ -627,6 +627,18 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyCollection<ClaseCatalogoDto>> GetClasesCatalogoAsync(CancellationToken cancellationToken)
+    {
+        var empresaId = GetRequiredEmpresaId();
+
+        return await DbContext.Clases
+            .AsNoTracking()
+            .Where(x => x.EmpresaId == empresaId && x.Activo)
+            .OrderBy(x => x.Nombre)
+            .Select(x => new ClaseCatalogoDto(x.ClaseId, x.Nombre))
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyCollection<TarifaProductoResumenDto>> GetTarifasByProductoAsync(long productoEmpresaId, CancellationToken cancellationToken)
     {
         var empresaId = GetRequiredEmpresaId();

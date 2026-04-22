@@ -48,6 +48,8 @@ public sealed record ClaseAgendaHorarioDto(short DiaSemana, TimeOnly HoraInicio,
 
 public sealed record ClaseAgendaDto(long ClaseId, string Nombre, string ProfesorNombre, int CupoMaximo, bool Activo, IReadOnlyCollection<ClaseAgendaHorarioDto> Horarios);
 
+public sealed record ClaseCatalogoDto(long ClaseId, string Nombre);
+
 public sealed record ClaseDto(long ClaseId, string Nombre, long ProfesorEmpresaId, string ProfesorNombre, int CupoMaximo, bool Activo, IReadOnlyCollection<ClaseHorarioDto> Horarios);
 
 public sealed record ClaseHorarioRequestDto(short DiaSemana, TimeOnly HoraInicio, TimeOnly HoraFin, bool Activo);
