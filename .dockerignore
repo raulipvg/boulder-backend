@@ -1,0 +1,9 @@
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+**/.idea/
+_build_out/
+.git/
+.gitignore
+docker-compose*.yml

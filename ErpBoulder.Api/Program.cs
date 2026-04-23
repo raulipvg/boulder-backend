@@ -9,6 +9,26 @@ using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
+if (string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("DefaultConnection")))
+{
+    throw new InvalidOperationException("Missing required configuration 'ConnectionStrings:DefaultConnection'.");
+}
+
+if (string.IsNullOrWhiteSpace(builder.Configuration["Jwt:Key"]))
+{
+    throw new InvalidOperationException("Missing required configuration 'Jwt:Key'.");
+}
+
+if (string.IsNullOrWhiteSpace(builder.Configuration["Jwt:Issuer"]))
+{
+    throw new InvalidOperationException("Missing required configuration 'Jwt:Issuer'.");
+}
+
+if (string.IsNullOrWhiteSpace(builder.Configuration["Jwt:Audience"]))
+{
+    throw new InvalidOperationException("Missing required configuration 'Jwt:Audience'.");
+}
+
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserContext, CurrentUserContext>();
 
@@ -21,11 +41,15 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.AllowAnyHeader().AllowAnyMethod().AllowAnyOrigin();
+        policy.WithOrigins("http://localhost:5173", "http://localhost:8080")
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
     });
 });
 
-var jwtSettings = builder.Configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>() ?? new JwtSettings();
+var jwtSettings = builder.Configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
+    ?? throw new InvalidOperationException("Missing required configuration section 'Jwt'.");
 var key = Encoding.UTF8.GetBytes(jwtSettings.Key);
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
