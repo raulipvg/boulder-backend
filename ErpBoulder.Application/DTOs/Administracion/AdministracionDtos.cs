@@ -10,7 +10,7 @@ public sealed record UpsertBloqueHorarioRequestDto(string Nombre, TimeOnly HoraI
 
 public sealed record EmpresaDto(long EmpresaId, string NombreComercial, string? RazonSocial, string Rut, string Estado, string MonedaCodigo, string? TelefonoContacto, string? CorreoContacto);
 
-public sealed record CreateEmpresaRequestDto(string NombreComercial, string? RazonSocial, string Rut, string? TelefonoContacto, string? CorreoContacto);
+public sealed record CreateEmpresaRequestDto(string NombreComercial, string? RazonSocial, string Rut, string Estado, string? TelefonoContacto, string? CorreoContacto);
 
 public sealed record UsuarioDto(long UsuarioId, string NombreCompleto, string Rut, string EmailLogin, string Estado, IReadOnlyCollection<string> Roles, long? EmpresaId, string? EmpresaNombre);
 

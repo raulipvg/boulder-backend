@@ -14,6 +14,8 @@ public sealed class AuthService(
     IJwtTokenService jwtTokenService,
     ICurrentUserContext currentUser) : IAuthService
 {
+    private const string GenericLoginErrorMessage = "Error al iniciar sesión o credenciales incorrectas.";
+
     public async Task<AuthResponseDto> LoginAsync(LoginRequestDto request, CancellationToken cancellationToken)
     {
         var usuario = await dbContext.Usuarios
@@ -23,17 +25,19 @@ public sealed class AuthService(
             .Include(x => x.Roles)
                 .ThenInclude(x => x.Empresa)
             .FirstOrDefaultAsync(x => x.EmailLogin == request.Email, cancellationToken)
-            ?? throw new InvalidOperationException("Credenciales inválidas.");
+            ?? throw new InvalidOperationException(GenericLoginErrorMessage);
 
         if (!BCrypt.Verify(request.Password, usuario.PasswordHash))
         {
-            throw new InvalidOperationException("Credenciales inválidas.");
+            throw new InvalidOperationException(GenericLoginErrorMessage);
         }
 
         if (!string.Equals(usuario.Estado, "activo", StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException("El usuario no está activo.");
+            throw new InvalidOperationException(GenericLoginErrorMessage);
         }
+
+        EnsureEmpresaAsociadaActiva(usuario);
 
         usuario.UltimoAccesoAt = DateTimeOffset.UtcNow;
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -58,6 +62,8 @@ public sealed class AuthService(
             .FirstOrDefaultAsync(x => x.UsuarioId == tokenUser.UserId, cancellationToken)
             ?? throw new InvalidOperationException("Usuario no encontrado.");
 
+        EnsureEmpresaAsociadaActiva(usuario);
+
         var userDto = BuildAuthUser(usuario);
 
         return new AuthResponseDto(
@@ -77,7 +83,20 @@ public sealed class AuthService(
             .FirstOrDefaultAsync(x => x.UsuarioId == userId, cancellationToken)
             ?? throw new InvalidOperationException("Usuario no encontrado.");
 
+        EnsureEmpresaAsociadaActiva(usuario);
+
         return BuildAuthUser(usuario);
+    }
+
+    private static void EnsureEmpresaAsociadaActiva(Domain.Entities.Administracion.Usuario usuario)
+    {
+        foreach (var role in usuario.Roles.Where(x => x.Activo && x.EmpresaId.HasValue))
+        {
+            if (!string.Equals(role.Empresa?.Estado, "activo", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(GenericLoginErrorMessage);
+            }
+        }
     }
 
     private static AuthUserDto BuildAuthUser(Domain.Entities.Administracion.Usuario usuario)

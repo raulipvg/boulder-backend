@@ -183,12 +183,18 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             throw new InvalidOperationException("Solo ADMIN_TOTAL puede crear empresas.");
         }
 
+        var estado = request.Estado?.Trim().ToLowerInvariant();
+        if (estado is not ("activo" or "inactivo"))
+        {
+            throw new InvalidOperationException("Estado de empresa no válido. Usa 'activo' o 'inactivo'.");
+        }
+
         var entity = new Empresa
         {
             NombreComercial = request.NombreComercial,
             RazonSocial = request.RazonSocial,
             Rut = request.Rut,
-            Estado = "activa",
+            Estado = estado,
             MonedaCodigo = "CLP",
             TelefonoContacto = request.TelefonoContacto,
             CorreoContacto = request.CorreoContacto,
@@ -199,7 +205,7 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
 
         DbContext.Empresas.Add(entity);
         await DbContext.SaveChangesAsync(cancellationToken);
-        await AuditAsync("empresa", entity.EmpresaId, "crear", new { entity.NombreComercial, entity.Rut }, entity.EmpresaId, cancellationToken);
+        await AuditAsync("empresa", entity.EmpresaId, "crear", new { entity.NombreComercial, entity.Rut, entity.Estado }, entity.EmpresaId, cancellationToken);
 
         return new EmpresaDto(entity.EmpresaId, entity.NombreComercial, entity.RazonSocial, entity.Rut, entity.Estado, entity.MonedaCodigo, entity.TelefonoContacto, entity.CorreoContacto);
     }
@@ -211,16 +217,23 @@ public sealed class AdministracionService : ServiceBase, IAdministracionService
             throw new InvalidOperationException("Solo ADMIN_TOTAL puede editar empresas.");
         }
 
+        var estado = request.Estado?.Trim().ToLowerInvariant();
+        if (estado is not ("activo" or "inactivo"))
+        {
+            throw new InvalidOperationException("Estado de empresa no válido. Usa 'activo' o 'inactivo'.");
+        }
+
         var entity = await DbContext.Empresas.FirstAsync(x => x.EmpresaId == empresaId, cancellationToken);
         entity.NombreComercial = request.NombreComercial;
         entity.RazonSocial = request.RazonSocial;
         entity.Rut = request.Rut;
+        entity.Estado = estado;
         entity.TelefonoContacto = request.TelefonoContacto;
         entity.CorreoContacto = request.CorreoContacto;
         entity.UpdatedAt = DateTimeOffset.UtcNow;
 
         await DbContext.SaveChangesAsync(cancellationToken);
-        await AuditAsync("empresa", entity.EmpresaId, "actualizar", new { entity.NombreComercial, entity.Rut }, entity.EmpresaId, cancellationToken);
+        await AuditAsync("empresa", entity.EmpresaId, "actualizar", new { entity.NombreComercial, entity.Rut, entity.Estado }, entity.EmpresaId, cancellationToken);
 
         return new EmpresaDto(entity.EmpresaId, entity.NombreComercial, entity.RazonSocial, entity.Rut, entity.Estado, entity.MonedaCodigo, entity.TelefonoContacto, entity.CorreoContacto);
     }

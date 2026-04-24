@@ -6,7 +6,7 @@ public sealed class Empresa
     public string NombreComercial { get; set; } = string.Empty;
     public string? RazonSocial { get; set; }
     public string Rut { get; set; } = string.Empty;
-    public string Estado { get; set; } = "activa";
+    public string Estado { get; set; } = "activo";
     public string MonedaCodigo { get; set; } = "CLP";
     public string? TelefonoContacto { get; set; }
     public string? CorreoContacto { get; set; }
